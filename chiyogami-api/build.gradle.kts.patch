@@ -9,8 +9,7 @@
  idea {
      module {
          generatedSourceDirs.add(generatedDir.toFile())
-@@ -100,8 +_,20 @@
- sourceSets {
+@@ -104,6 +_,18 @@
      main {
          java {
              srcDir(generatedDir)
@@ -29,8 +28,7 @@
          }
      }
  }
- 
-@@ -184,7 +_,7 @@
+@@ -186,7 +_,7 @@
  
  tasks.withType<Javadoc>().configureEach {
      val options = options as StandardJavadocDocletOptions
@@ -39,7 +37,7 @@
      options.use()
      options.isDocFilesSubDirs = true
      options.links(
-@@ -219,11 +_,11 @@
+@@ -213,11 +_,11 @@
      }
  
      // workaround for https://github.com/gradle/gradle/issues/4046

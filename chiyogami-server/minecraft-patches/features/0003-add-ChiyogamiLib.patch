@@ -5,10 +5,10 @@ Subject: [PATCH] add ChiyogamiLib
 
 
 diff --git a/net/minecraft/server/Main.java b/net/minecraft/server/Main.java
-index 38b50aaf6473c7692d3372ad7b956355be989bd4..ee6b888a089d5b4036932a0fdc6900e9bfefe01b 100644
+index a4d608d64b7d3477c9144d93547fd3b4f39a1b02..6112ace9853140c7a521c2e62391ae674e3238fe 100644
 --- a/net/minecraft/server/Main.java
 +++ b/net/minecraft/server/Main.java
-@@ -65,6 +65,7 @@ public class Main {
+@@ -68,6 +68,7 @@ public class Main {
      @SuppressForbidden(reason = "System.out needed before bootstrap")
      public static void main(final OptionSet options) { // CraftBukkit - replaces main(String[] args)
          io.papermc.paper.log.LogManagerShutdownThread.hook(); // Paper - Improved watchdog support
@@ -17,10 +17,10 @@ index 38b50aaf6473c7692d3372ad7b956355be989bd4..ee6b888a089d5b4036932a0fdc6900e9
          /* CraftBukkit start - Replace everything
          OptionParser parser = new OptionParser();
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 48f45a29d8cdca1d0e823ee1bafc974c5c28e0f8..63bdbd0a21b1f326adfe43aca07e81534edf7fc3 100644
+index d17fd6a3b39f12c4f178e824c32aedb5bb277bf4..2cb6f35b8db35353803b11ca05ad986c17027fa5 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -463,6 +463,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -462,6 +462,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
      @Override
      public final void moonrise$executeMidTickTasks() {
@@ -28,7 +28,7 @@ index 48f45a29d8cdca1d0e823ee1bafc974c5c28e0f8..63bdbd0a21b1f326adfe43aca07e8153
          final long startTime = System.nanoTime();
          if ((startTime - this.lastMidTickExecute) <= CHUNK_TASK_QUEUE_BACKOFF_MIN_TIME || (startTime - this.lastMidTickExecuteFailure) <= TASK_EXECUTION_FAILURE_BACKOFF) {
              // it's shown to be bad to constantly hit the queue (chunk loads slow to a crawl), even if no tasks are executed.
-@@ -1692,6 +1693,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1668,6 +1669,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          this.smoothedTickTimeMillis = this.smoothedTickTimeMillis * 0.8F + (float)tickTime / (float)TimeUtil.NANOSECONDS_PER_MILLISECOND * 0.19999999F;
          this.logTickMethodTime(nano);
          profiler.pop();
@@ -36,7 +36,7 @@ index 48f45a29d8cdca1d0e823ee1bafc974c5c28e0f8..63bdbd0a21b1f326adfe43aca07e8153
      }
  
      protected void processPacketsAndTick(final boolean sprinting) {
-@@ -1836,6 +1838,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1812,6 +1814,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          this.updateEffectiveRespawnData();
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
@@ -44,7 +44,7 @@ index 48f45a29d8cdca1d0e823ee1bafc974c5c28e0f8..63bdbd0a21b1f326adfe43aca07e8153
          for (ServerLevel level : this.getAllLevels()) {
              // Chiyogami start - world threading
              world.chiyogami.thread.WorldThread worldThread = level.worldThread;
-@@ -1843,6 +1846,10 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1819,6 +1822,10 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
              worldThread.setWorldTickRunnable(() -> {
              level.thread = Thread.currentThread();
              // Chiyogami end
@@ -55,7 +55,7 @@ index 48f45a29d8cdca1d0e823ee1bafc974c5c28e0f8..63bdbd0a21b1f326adfe43aca07e8153
              level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
              level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
              level.updateLagCompensationTick(); // Paper - lag compensation
-@@ -1861,6 +1868,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1837,6 +1844,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
              profiler.pop();
              profiler.pop();
              level.explosionDensityCache.clear(); // Paper - Optimize explosions

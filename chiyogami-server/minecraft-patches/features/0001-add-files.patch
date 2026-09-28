@@ -208,7 +208,7 @@ index 0000000000000000000000000000000000000000..20cc1bc1cf14f1bd093b59ff6475516b
 +
 diff --git a/world/chiyogami/thread/ChiyogamiServerThreadProvider.java b/world/chiyogami/thread/ChiyogamiServerThreadProvider.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..33811316b3030cdeb2b7c1ac628284bf024b9d2d
+index 0000000000000000000000000000000000000000..fb8b3e614d42ed5aea58c043ce7b2112979af023
 --- /dev/null
 +++ b/world/chiyogami/thread/ChiyogamiServerThreadProvider.java
 @@ -0,0 +1,29 @@
@@ -228,7 +228,7 @@ index 0000000000000000000000000000000000000000..33811316b3030cdeb2b7c1ac628284bf
 +            providerField.set(null, new ServerThreadProvider() {
 +                @Override
 +                public Thread getMainThread() {
-+                    return MinecraftServer.getServer().serverThread;
++                    return MinecraftServer.getServer().getRunningThread();
 +                }
 +
 +                @Override
@@ -390,7 +390,7 @@ index 0000000000000000000000000000000000000000..abcfed510c9143b9c8e8c1487267cb52
 +}
 diff --git a/world/chiyogami/thread/WorldThread.java b/world/chiyogami/thread/WorldThread.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6ff13833c811b392194e8450b1b2f84562fc45ef
+index 0000000000000000000000000000000000000000..7b86b4011674beee03c22fc43965e0581d22c483
 --- /dev/null
 +++ b/world/chiyogami/thread/WorldThread.java
 @@ -0,0 +1,229 @@
@@ -558,7 +558,7 @@ index 0000000000000000000000000000000000000000..6ff13833c811b392194e8450b1b2f845
 +    public void catchIllegalThread(String reason){
 +        Thread currentThread = Thread.currentThread();
 +        
-+        if(currentThread == MinecraftServer.getServer().serverThread) return;
++        if(currentThread == MinecraftServer.getServer().getRunningThread()) return;
 +        if(currentThread == this.currentThread) return;
 +        
 +        throw new IllegalStateException("Chiyogami > Unauthorized concurrent execution to worlds."

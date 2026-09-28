@@ -5,10 +5,10 @@ Subject: [PATCH] add world threading
 
 
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index cc35c6271c98615a486422d0490145227626bd85..48f45a29d8cdca1d0e823ee1bafc974c5c28e0f8 100644
+index 68151ce05e7009f28dda0470c744920cbd5f4a27..d17fd6a3b39f12c4f178e824c32aedb5bb277bf4 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -1837,6 +1837,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1813,6 +1813,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
          for (ServerLevel level : this.getAllLevels()) {
@@ -21,7 +21,7 @@ index cc35c6271c98615a486422d0490145227626bd85..48f45a29d8cdca1d0e823ee1bafc974c
              level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
              level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
              level.updateLagCompensationTick(); // Paper - lag compensation
-@@ -1855,7 +1861,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1831,7 +1837,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
              profiler.pop();
              profiler.pop();
              level.explosionDensityCache.clear(); // Paper - Optimize explosions
@@ -32,7 +32,7 @@ index cc35c6271c98615a486422d0490145227626bd85..48f45a29d8cdca1d0e823ee1bafc974c
  
          profiler.popPush("connection");
 diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
-index 56659181dc817ea028428eabf5937308c04b8cc5..394aa2dfa6b40aa4343777b3d1568d4f903e3895 100644
+index 9286d9bcf3ec4069e77d3133f3d7bf29b2370c5a..914e19c0c70239547629b103b5c1320c5a17ceb6 100644
 --- a/net/minecraft/world/level/Level.java
 +++ b/net/minecraft/world/level/Level.java
 @@ -101,6 +101,7 @@ import org.bukkit.craftbukkit.CraftWorld;
@@ -43,11 +43,11 @@ index 56659181dc817ea028428eabf5937308c04b8cc5..394aa2dfa6b40aa4343777b3d1568d4f
  // CraftBukkit end
  
  public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel, ca.spottedleaf.moonrise.patches.chunk_system.world.ChunkSystemEntityGetter { // Paper - rewrite chunk system // Paper - optimise collisions
-@@ -122,7 +123,10 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+@@ -123,7 +124,10 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
      protected final CollectingNeighborUpdater neighborUpdater;
      private final List<TickingBlockEntity> pendingBlockEntityTickers = Lists.newArrayList();
      private boolean tickingBlockEntities;
--    public final Thread thread;
+-    protected final Thread thread;
 +    // Chiyogami start - world threading
 +    public Thread thread;
 +    public WorldThread worldThread;

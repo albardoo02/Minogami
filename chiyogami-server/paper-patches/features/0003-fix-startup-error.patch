@@ -5,7 +5,7 @@ Subject: [PATCH] fix startup error
 
 
 diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
-index 7d6d53c8eb2c724bd265e8ad15b22d71e97e2a7b..7070d543e5e20e7ae092b4b7ce0b2d8dd85045cb 100644
+index 51731a2bf4659dd7f3d74fa73cb8d9e5e9d08770..94a1a94b465674175c895b7838496876a9d4a602 100644
 --- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
 +++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
 @@ -28,6 +28,7 @@ import java.util.logging.Level;
@@ -40,10 +40,10 @@ index 7d6d53c8eb2c724bd265e8ad15b22d71e97e2a7b..7070d543e5e20e7ae092b4b7ce0b2d8d
              throw new IllegalStateException(event.getEventName() + " may only be triggered asynchronously.");
          } else if (!event.isAsynchronous() && !this.server.isPrimaryThread() && !this.server.isStopping()) {
 diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
-index da49c8005592a154946750591ce082796f24dd3b..b52b569c30db2707d95143d9314c30d209376334 100644
+index 83b8d44c7c8fc3cabb371c4e6ab9e1a9320ead35..60aed0b379897860d9703663d7aef199f780347c 100644
 --- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
 +++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
-@@ -411,6 +411,7 @@ public final class CraftServer implements Server {
+@@ -405,6 +405,7 @@ public final class CraftServer implements Server {
          this.serverLinks = new CraftServerLinks(console);
  
          Bukkit.setServer(this);
