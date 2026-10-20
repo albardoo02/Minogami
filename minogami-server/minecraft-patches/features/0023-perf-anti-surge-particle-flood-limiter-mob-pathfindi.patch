@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 18:19:35 +0900
+Subject: [PATCH] perf(anti-surge): particle flood limiter, mob pathfinding
+ throttling, and TNT raycast fast-path
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 39052b1d4cdd7c0f2851ccd67ed684154bfa8946..33703729946f0047cd0d331ca8ea824fb809f54e 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -2479,7 +2479,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             return false;
+         } else {
+             BlockPos pos = player.blockPosition();
+-            if (pos.closerToCenterThan(new Vec3(x, y, z), overrideLimiter ? 512.0 : 32.0)) {
++            double maxDist = overrideLimiter ? 64.0 : 32.0; // Minogami - clamp extreme 512m particle broadcast to 64m to protect lobbies
++            if (pos.closerToCenterThan(new Vec3(x, y, z), maxDist)) {
++                if (player.particlePacketCountThisTick++ > 300) {
++                    return false; // Minogami - anti-surge protection: prevent network buffer overflow / watchdog crash
++                }
+                 player.connection.send(packet);
+                 return true;
+             } else {
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index 1137be30f125cb79f05f3e5c104cdf8cca979ff1..7f3a47fb698ebd778804e695693ea6cd5318b8f6 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -273,6 +273,7 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+     private ServerPlayer.@Nullable RespawnConfig respawnConfig;
+     private final TextFilter textFilter;
+     private boolean textFilteringEnabled;
++    public int particlePacketCountThisTick = 0; // Minogami - anti-surge particle limiter
+     private boolean allowsListing;
+     private boolean spawnExtraParticlesOnFall = false;
+     public WardenSpawnTracker wardenSpawnTracker = new WardenSpawnTracker();
+@@ -808,6 +809,7 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+     }
+ 
+     public void doTick() {
++        this.particlePacketCountThisTick = 0; // Minogami - reset particle count per tick
+         try {
+             if (this.valid && (!this.isSpectator() || !this.touchingUnloadedChunk())) { // Paper - don't tick dead players that are not in the world currently (pending respawn)
+                 super.tick();
+diff --git a/net/minecraft/world/entity/ai/navigation/PathNavigation.java b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+index f042ddf76f3a39c389e099f09dd5cb07483d2046..b426e2a46a3216d75532bdaec75935ad42d55001 100644
+--- a/net/minecraft/world/entity/ai/navigation/PathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+@@ -55,6 +55,7 @@ public abstract class PathNavigation {
+     public final PathFinder pathFinder;
+     private boolean isStuck;
+     private float requiredPathLength = 16.0F;
++    protected int lastPathfindSuccessTick = 0; // Minogami - pathfinding throttle
+ 
+     public PathNavigation(final Mob mob, final Level level) {
+         this.mob = mob;
+@@ -222,6 +223,14 @@ public abstract class PathNavigation {
+     }
+ 
+     public boolean moveTo(final Entity target, final int reachRange, final double speedModifier) {
++        // Minogami start - pathfinding throttling: avoid recomputing A* every tick if target has barely moved and current path is still valid
++        if (this.path != null && !this.path.isDone() && this.targetPos != null) {
++            if (this.targetPos.closerToCenterThan(target.position(), 2.0) && (net.minecraft.server.MinecraftServer.currentTick - this.lastPathfindSuccessTick < 6)) {
++                this.setSpeedModifier(speedModifier);
++                return true;
++            }
++        }
++        // Minogami end
+         // Paper start - Perf: Optimise pathfinding
+         if (this.pathfindFailures > 10 && this.path == null && net.minecraft.server.MinecraftServer.currentTick < this.lastFailure + 40) {
+             return false;
+@@ -232,6 +241,7 @@ public abstract class PathNavigation {
+         if (newPath != null && this.moveTo(newPath, speedModifier)) {
+             this.lastFailure = 0;
+             this.pathfindFailures = 0;
++            this.lastPathfindSuccessTick = net.minecraft.server.MinecraftServer.currentTick; // Minogami
+             return true;
+         } else {
+             this.pathfindFailures++;
+diff --git a/net/minecraft/world/level/ServerExplosion.java b/net/minecraft/world/level/ServerExplosion.java
+index a2893f4298af62177fc3621603d465e24fe1e2eb..1d24ef7c968e2510715be35b13649a7f113faae2 100644
+--- a/net/minecraft/world/level/ServerExplosion.java
++++ b/net/minecraft/world/level/ServerExplosion.java
+@@ -733,6 +733,9 @@ public class ServerExplosion implements Explosion {
+ 
+     // Paper start - Optimize explosions
+     private float getBlockDensity(Vec3 center, Entity entity) {
++        if (entity instanceof net.minecraft.world.entity.item.PrimedTnt) {
++            return 1.0F; // Minogami - fast-path PrimedTnt: skip 16-point raycasting for other primed TNT entities
++        }
+         if (!this.level.paperConfig().environment.optimizeExplosions) {
+             return this.getSeenFraction(center, entity, this.directMappedBlockCache, this.mutablePos); // Paper - collision optimisations
+         }
