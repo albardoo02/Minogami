@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:55:30 +0900
+Subject: [PATCH] Safeguard WorldThread waitFor cleanup in finally, preserve
+ exception cause, and optimize log allocations
+
+
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index 00f049123ec9a986f8462c27a74cb1f27648f1ca..8123c6a30183780bca74c1657330ffb15866dfc3 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -89,7 +89,7 @@ public class WorldThread implements Runnable {
+         if(currentThread == this.currentThread) return;
+         
+         throw new IllegalStateException("Chiyogami > Unauthorized concurrent execution to worlds."
+-            + System.lineSeparator() + "             World : " + level.getWorld().getName() + "  Reason : " + reason
++            + System.lineSeparator() + "             World : " + (level.getWorld() != null ? level.getWorld().getName() : "world") + "  Reason : " + reason
+             + System.lineSeparator() + "This operation is unacceptable because it can cause serious damage to this server."
+             + System.lineSeparator() + "It has been rejected by Chiyogami, it is not a bug.");
+     }
+@@ -101,7 +101,7 @@ public class WorldThread implements Runnable {
+         }
+         
+         if (MinogamiLogger.isShowLogs) {
+-            MinogamiLogger.info("Try wait " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++            MinogamiLogger.info(() -> "Try wait " + (level.getWorld() != null ? level.getWorld().getName() : "world") + " -> " + (targetWorldThread.level.getWorld() != null ? targetWorldThread.level.getWorld().getName() : "world"));
+         }
+ 
+         if (level != targetWorldThread.level) {
+@@ -125,7 +125,7 @@ public class WorldThread implements Runnable {
+                         }
+ 
+                         if (MinogamiLogger.isShowLogs) {
+-                            MinogamiLogger.info("Wait for " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++                            MinogamiLogger.info(() -> "Wait for " + (level.getWorld() != null ? level.getWorld().getName() : "world") + " -> " + (targetWorldThread.level.getWorld() != null ? targetWorldThread.level.getWorld().getName() : "world"));
+                         }
+                         targetWorldThread.worldTasks.add(worldTask);
+                         this.waitFor = targetWorldThread;
+@@ -144,12 +144,12 @@ public class WorldThread implements Runnable {
+         }
+         
+         try {
+-            T result = worldTask.get();
+-            this.waitFor = null;
+-            return result;
++            return worldTask.get();
+         } catch (InterruptedException | ExecutionException e) {
+             e.printStackTrace();
+-            throw new IllegalStateException("Failed to wait for world task.");
++            throw new IllegalStateException("Failed to wait for world task.", e);
++        } finally {
++            this.waitFor = null;
+         }
+     }
+ 
