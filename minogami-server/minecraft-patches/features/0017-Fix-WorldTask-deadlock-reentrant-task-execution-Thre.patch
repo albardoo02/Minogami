@@ -1,0 +1,268 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 16:49:03 +0900
+Subject: [PATCH] Fix WorldTask deadlock, reentrant task execution, ThreadLocal
+ leak, and profiler pop
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 80e0b600cccece31eeffd0f40d54e5716759fba6..39052b1d4cdd7c0f2851ccd67ed684154bfa8946 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -897,8 +897,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                                 if (!entity.isRemoved()) {
+                                     if (!tickRateManager.isEntityFrozen(entity)) {
+                                         profiler.push("checkDespawn");
+-                                        entity.checkDespawn();
+-                                        profiler.pop();
++                                        try {
++                                            entity.checkDespawn();
++                                        } finally {
++                                            profiler.pop();
++                                        }
+                                         if (true) { // Paper - rewrite chunk system
+                                             Entity vehicle = entity.getVehicle();
+                                             if (vehicle != null) {
+@@ -910,8 +913,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+                                             }
+ 
+                                             profiler.push("tick");
+-                                            this.guardEntityTick(this::tickNonPassenger, entity);
+-                                            profiler.pop();
++                                            try {
++                                                this.guardEntityTick(this::tickNonPassenger, entity);
++                                            } finally {
++                                                profiler.pop();
++                                            }
+                                         }
+                                     }
+                                 }
+diff --git a/world/minogami/thread/ImplConcurrentTaskHandler.java b/world/minogami/thread/ImplConcurrentTaskHandler.java
+index 1f151b6b76d532a97064fc3c1de376be1429970f..860bd37e0148bbfb64a188655cb6bba90a2932fb 100644
+--- a/world/minogami/thread/ImplConcurrentTaskHandler.java
++++ b/world/minogami/thread/ImplConcurrentTaskHandler.java
+@@ -18,8 +18,16 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+             return supplier.get();
+         }
+         
++        if (targetWorld == null) {
++            throw new IllegalArgumentException("targetWorld cannot be null");
++        }
++        var craftWorld = (CraftWorld) targetWorld;
++        var handle = craftWorld.getHandle();
++        if (handle == null || handle.worldThread == null) {
++            throw new IllegalStateException("World " + targetWorld.getName() + " is not initialized or unloaded");
++        }
++        WorldThread targetWorldThread = handle.worldThread;
+         WorldThread currentWorldThread = WorldThreadPool.getWorldThreadFromCurrentThread();
+-        WorldThread targetWorldThread = ((CraftWorld) targetWorld).getHandle().worldThread;
+         
+         // World thread - already on target world thread
+         if (currentWorldThread == targetWorldThread) {
+@@ -43,9 +51,14 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+             
+             try {
+                 return worldTask.get();
+-            } catch (InterruptedException | ExecutionException e) {
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++                e.printStackTrace();
++                throw new IllegalStateException("Failed to wait for world task.", e);
++            } catch (ExecutionException e) {
+                 e.printStackTrace();
+-                throw new IllegalStateException("Failed to wait for world task.");
++                Throwable cause = e.getCause() != null ? e.getCause() : e;
++                throw new IllegalStateException("Failed to wait for world task: " + cause.getMessage(), cause);
+             }
+         }
+         
+diff --git a/world/minogami/thread/WorldTask.java b/world/minogami/thread/WorldTask.java
+index 8f6419973738b73868ce58a2ee8f9580fff3438c..90397493e6bc93340ba182562a73ba5b898addb5 100644
+--- a/world/minogami/thread/WorldTask.java
++++ b/world/minogami/thread/WorldTask.java
+@@ -11,6 +11,12 @@ public class WorldTask<T> extends CompletableFuture<T> {
+         this.task = task;
+     }
+     
+-    public void complete(){super.complete(task.get());}
++    public void complete() {
++        try {
++            super.complete(task.get());
++        } catch (Throwable t) {
++            super.completeExceptionally(t);
++        }
++    }
+     
+ }
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index 8123c6a30183780bca74c1657330ffb15866dfc3..c88ceeb49ae5c1b24073fb4151af7da623c57818 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -5,6 +5,7 @@ import net.minecraft.world.level.Level;
+ import world.minogami.log.MinogamiLogger;
+ 
+ import java.util.*;
++import java.util.concurrent.ConcurrentLinkedQueue;
+ import java.util.concurrent.ExecutionException;
+ import java.util.concurrent.locks.ReentrantLock;
+ 
+@@ -16,8 +17,7 @@ public class WorldThread implements Runnable {
+     
+     private Runnable worldTickRunnable;
+     
+-    private List<WorldTask<?>> worldTasks = new ArrayList<>();
+-    private List<WorldTask<?>> executingTasks = new ArrayList<>();
++    private final Queue<WorldTask<?>> worldTasks = new ConcurrentLinkedQueue<>();
+     
+     private long tick = 0;
+     
+@@ -47,7 +47,11 @@ public class WorldThread implements Runnable {
+     
+     public void setCurrentThread(Thread currentThread) {this.currentThread = currentThread;}
+     
+-    public void addWorldTask(WorldTask<?> worldTask) {worldTasks.add(worldTask);}
++    public void addWorldTask(WorldTask<?> worldTask) {
++        if (worldTask != null) {
++            worldTasks.offer(worldTask);
++        }
++    }
+     
+     @Override
+     public void run() {
+@@ -57,26 +61,30 @@ public class WorldThread implements Runnable {
+         WorldThreadPool.setCurrentWorldThread(this);
+         
+         try {
+-            LOCK.lock();
+-            isProcessingWorldTick = true;
+-        } finally {
+-            LOCK.unlock();
+-        }
+-        
+-        executeWorldTasks();
+-        
+-        try {
+-            worldTickRunnable.run();
+-        } catch (Throwable t) {
+-            world.minogami.log.SafeguardLogger.logSafeguardException("WorldTickThread[" + (level.getWorld() != null ? level.getWorld().getName() : "world") + "]", t);
+-        }
+-        
+-        executeWorldTasks();
+-        try {
+-            LOCK.lock();
+-            isProcessingWorldTick = false;
++            try {
++                LOCK.lock();
++                isProcessingWorldTick = true;
++            } finally {
++                LOCK.unlock();
++            }
++            
++            executeWorldTasks();
++            
++            try {
++                worldTickRunnable.run();
++            } catch (Throwable t) {
++                world.minogami.log.SafeguardLogger.logSafeguardException("WorldTickThread[" + (level.getWorld() != null ? level.getWorld().getName() : "world") + "]", t);
++            }
++            
++            executeWorldTasks();
+         } finally {
+-            LOCK.unlock();
++            try {
++                LOCK.lock();
++                isProcessingWorldTick = false;
++            } finally {
++                LOCK.unlock();
++            }
++            WorldThreadPool.clearCurrentWorldThread();
+         }
+     }
+     
+@@ -127,7 +135,7 @@ public class WorldThread implements Runnable {
+                         if (MinogamiLogger.isShowLogs) {
+                             MinogamiLogger.info(() -> "Wait for " + (level.getWorld() != null ? level.getWorld().getName() : "world") + " -> " + (targetWorldThread.level.getWorld() != null ? targetWorldThread.level.getWorld().getName() : "world"));
+                         }
+-                        targetWorldThread.worldTasks.add(worldTask);
++                        targetWorldThread.addWorldTask(worldTask);
+                         this.waitFor = targetWorldThread;
+                     } else {
+                         worldTask.complete();
+@@ -145,35 +153,27 @@ public class WorldThread implements Runnable {
+         
+         try {
+             return worldTask.get();
+-        } catch (InterruptedException | ExecutionException e) {
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
+             e.printStackTrace();
+             throw new IllegalStateException("Failed to wait for world task.", e);
++        } catch (ExecutionException e) {
++            e.printStackTrace();
++            Throwable cause = e.getCause() != null ? e.getCause() : e;
++            throw new IllegalStateException("Failed to wait for world task: " + cause.getMessage(), cause);
+         } finally {
+             this.waitFor = null;
+         }
+     }
+ 
+     public void executeWorldTasks() {
+-        List<WorldTask<?>> tasksToRun;
+-        try {
+-            LOCK.lock();
+-            if (worldTasks.isEmpty()) return;
+-            tasksToRun = worldTasks;
+-            worldTasks = executingTasks;
+-            executingTasks = tasksToRun;
+-        } finally {
+-            LOCK.unlock();
+-        }
+-        try {
+-            for (int i = 0; i < tasksToRun.size(); i++) {
+-                try {
+-                    tasksToRun.get(i).complete();
+-                } catch (Throwable t) {
+-                    world.minogami.log.SafeguardLogger.logSafeguardException("WorldTask completion", t);
+-                }
++        WorldTask<?> task;
++        while ((task = worldTasks.poll()) != null) {
++            try {
++                task.complete();
++            } catch (Throwable t) {
++                world.minogami.log.SafeguardLogger.logSafeguardException("WorldTask completion", t);
+             }
+-        } finally {
+-            tasksToRun.clear();
+         }
+     }
+ }
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index 4ec5a3884a88a7d7e65c664b659684fc68b35e25..78657b79b738fe77ee339c530d987c0e6e3bf3ed 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
+@@ -28,6 +28,11 @@ public class WorldThreadPool {
+         worldThreadHashMap.put(Thread.currentThread(), worldThread);
+     }
+ 
++    public static void clearCurrentWorldThread() {
++        CURRENT_WORLD_THREAD.remove();
++        worldThreadHashMap.remove(Thread.currentThread());
++    }
++
+     public static void addCurrentThreadToWorldThreadHashMap(WorldThread worldThread) {
+         setCurrentWorldThread(worldThread);
+     }
+@@ -76,7 +81,12 @@ public class WorldThreadPool {
+         for (int i = 0; i < futures.size(); i++) {
+             try {
+                 futures.get(i).get();
+-            } catch (Exception e){e.printStackTrace();}
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++                e.printStackTrace();
++            } catch (Exception e) {
++                e.printStackTrace();
++            }
+         }
+     }
+     

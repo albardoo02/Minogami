@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 16:48:58 +0900
+Subject: [PATCH] Release event lock before dispatching ServerExceptionEvent
+
+
+diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+index 71cce2981b08b16fe6a20810e04965c5fb91d297..fcbc2d2376dee77a80d2fd3c796756f68e2d88ef 100644
+--- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
++++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+@@ -91,6 +91,10 @@ public class PaperEventManager {
+                     world.minogami.log.SafeguardLogger.logSafeguardException("Event " + event.getEventName() + " (" + plugin.getName() + ")", ex);
+                     String msg = "Could not pass event " + event.getEventName() + " to " + plugin.getPluginMeta().getDisplayName();
+                     if (!(event instanceof ServerExceptionEvent)) { // We don't want to cause an endless event loop
++                        if (holdingLock) {
++                            EVENT_LOCK.unlock();
++                            holdingLock = false;
++                        }
+                         try {
+                             this.callEvent(new ServerExceptionEvent(new ServerEventException(msg, ex, plugin, registration.getListener(), event)));
+                         } catch (Throwable ignored) {}
