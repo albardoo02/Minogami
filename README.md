@@ -1,6 +1,6 @@
 # Minogami (美濃紙)
 
-Minogami（美濃紙）は [Paper](https://github.com/PaperMC/Paper) をベースに改良されたChiyogamiを更に改良を重ねた、次世代マルチスレッドMinecraftサーバーソフトです。
+Minogami（美濃紙）は [Paper](https://github.com/PaperMC/Paper) をベースに改良されたChiyogamiに更に改良を重ねた、次世代マルチスレッドMinecraftサーバーソフトです。
 
 従来のマルチスレッドサーバーではプラグインの同期問題やデッドロックが頻発し、大量のプラグインを改修する必要がありました。Minogami ではサーバーコア側に対障害性・並行性強化レイヤーを設けることで、既存プラグイン資産を維持したまま高負荷サーバーを安定して並行稼働させることを目的としています。
 
