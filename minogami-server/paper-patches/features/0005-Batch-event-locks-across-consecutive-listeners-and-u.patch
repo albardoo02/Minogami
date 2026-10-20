@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:16:20 +0900
+Subject: [PATCH] Batch event locks across consecutive listeners and use
+ non-fair lock
+
+
+diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+index 1bd036dc1f29b85db87156ae4cc8f29831f5239a..71cce2981b08b16fe6a20810e04965c5fb91d297 100644
+--- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
++++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+@@ -26,7 +26,7 @@ import org.jetbrains.annotations.NotNull;
+ 
+ public class PaperEventManager {
+     public static boolean synchronizedEvent; // Chiyogami - config
+-    private final java.util.concurrent.locks.ReentrantLock EVENT_LOCK = new world.minogami.thread.WorldThreadSafeLock(true); // Chiyogami - synced event
++    private final java.util.concurrent.locks.ReentrantLock EVENT_LOCK = new world.minogami.thread.WorldThreadSafeLock(false); // Chiyogami - synced event
+ 
+     private final Server server;
+ 
+@@ -57,41 +57,49 @@ public class PaperEventManager {
+         HandlerList handlers = event.getHandlers();
+         RegisteredListener[] listeners = handlers.getRegisteredListeners();
+ 
+-        for (RegisteredListener registration : listeners) {
+-            Plugin plugin = registration.getPlugin();
+-            if (!plugin.isEnabled()) {
+-                continue;
+-            }
+-
+-            boolean lockThis = syncListeners && !world.minogami.config.EventLockBypass.isPluginBypassed(plugin.getName());
+-            if (lockThis) {
+-                EVENT_LOCK.lock();
+-            }
+-            try {
+-                registration.callEvent(event);
+-            } catch (AuthorNagException ex) {
+-                if (plugin.isNaggable()) {
+-                    plugin.setNaggable(false);
+-
+-                    this.server.getLogger().log(Level.SEVERE, String.format(
+-                        "Nag author(s): '%s' of '%s' about the following: %s",
+-                        plugin.getPluginMeta().getAuthors(),
+-                        plugin.getPluginMeta().getDisplayName(),
+-                        ex.getMessage()
+-                    ));
+-                }
+-            } catch (Throwable ex) {
+-                world.minogami.log.SafeguardLogger.logSafeguardException("Event " + event.getEventName() + " (" + plugin.getName() + ")", ex);
+-                String msg = "Could not pass event " + event.getEventName() + " to " + plugin.getPluginMeta().getDisplayName();
+-                if (!(event instanceof ServerExceptionEvent)) { // We don't want to cause an endless event loop
+-                    try {
+-                        this.callEvent(new ServerExceptionEvent(new ServerEventException(msg, ex, plugin, registration.getListener(), event)));
+-                    } catch (Throwable ignored) {}
++        boolean holdingLock = false;
++        try {
++            for (RegisteredListener registration : listeners) {
++                Plugin plugin = registration.getPlugin();
++                if (!plugin.isEnabled()) {
++                    continue;
+                 }
+-            } finally {
+-                if (lockThis) {
++
++                boolean lockThis = syncListeners && !world.minogami.config.EventLockBypass.isPluginBypassed(plugin.getName());
++                if (lockThis && !holdingLock) {
++                    EVENT_LOCK.lock();
++                    holdingLock = true;
++                } else if (!lockThis && holdingLock) {
+                     EVENT_LOCK.unlock();
++                    holdingLock = false;
+                 }
++
++                try {
++                    registration.callEvent(event);
++                } catch (AuthorNagException ex) {
++                    if (plugin.isNaggable()) {
++                        plugin.setNaggable(false);
++
++                        this.server.getLogger().log(Level.SEVERE, String.format(
++                            "Nag author(s): '%s' of '%s' about the following: %s",
++                            plugin.getPluginMeta().getAuthors(),
++                            plugin.getPluginMeta().getDisplayName(),
++                            ex.getMessage()
++                        ));
++                    }
++                } catch (Throwable ex) {
++                    world.minogami.log.SafeguardLogger.logSafeguardException("Event " + event.getEventName() + " (" + plugin.getName() + ")", ex);
++                    String msg = "Could not pass event " + event.getEventName() + " to " + plugin.getPluginMeta().getDisplayName();
++                    if (!(event instanceof ServerExceptionEvent)) { // We don't want to cause an endless event loop
++                        try {
++                            this.callEvent(new ServerExceptionEvent(new ServerEventException(msg, ex, plugin, registration.getListener(), event)));
++                        } catch (Throwable ignored) {}
++                    }
++                }
++            }
++        } finally {
++            if (holdingLock) {
++                EVENT_LOCK.unlock();
+             }
+         }
+     }
