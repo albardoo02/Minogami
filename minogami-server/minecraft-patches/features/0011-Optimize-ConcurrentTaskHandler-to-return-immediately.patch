@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:13:35 +0900
+Subject: [PATCH] Optimize ConcurrentTaskHandler to return immediately on same
+ world thread
+
+
+diff --git a/world/minogami/thread/ImplConcurrentTaskHandler.java b/world/minogami/thread/ImplConcurrentTaskHandler.java
+index 2b29514aa0a9bf02b70a7960e126007ff096898d..c663db5f84f090df49ac7dcfcd614e2947385bf0 100644
+--- a/world/minogami/thread/ImplConcurrentTaskHandler.java
++++ b/world/minogami/thread/ImplConcurrentTaskHandler.java
+@@ -1,6 +1,5 @@
+ package world.minogami.thread;
+ 
+-import org.bukkit.Bukkit;
+ import org.bukkit.World;
+ import org.bukkit.craftbukkit.CraftWorld;
+ import world.chiyogami.chiyogamilib.ChiyogamiLib;
+@@ -19,11 +18,16 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+             return supplier.get();
+         }
+         
+-        WorldTask<T> worldTask = new WorldTask<>(supplier);
+-        
+         WorldThread currentWorldThread = WorldThreadPool.getWorldThreadFromCurrentThread();
+         WorldThread targetWorldThread = ((CraftWorld) targetWorld).getHandle().worldThread;
+         
++        // World thread - already on target world thread
++        if (currentWorldThread == targetWorldThread) {
++            return supplier.get();
++        }
++        
++        WorldTask<T> worldTask = new WorldTask<>(supplier);
++        
+         // Async thread
+         if (currentWorldThread == null) {
+             try {
+@@ -45,18 +49,8 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+             }
+         }
+         
+-        // World thread
+-        if (currentWorldThread == targetWorldThread) {
+-            worldTask.complete();
+-            try {
+-                return worldTask.get();
+-            } catch (InterruptedException | ExecutionException e) {
+-                e.printStackTrace();
+-                throw new IllegalStateException("Failed to wait for world task.");
+-            }
+-        } else {
+-            return currentWorldThread.runWorldTaskThreadSafely(targetWorldThread, worldTask, "Internal error.");
+-        }
++        // World thread - different world
++        return currentWorldThread.runWorldTaskThreadSafely(targetWorldThread, worldTask, "Internal error.");
+     }
+     
+ }
