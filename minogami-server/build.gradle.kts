@@ -22,11 +22,11 @@ paperweight {
     minecraftVersion = providers.gradleProperty("mcVersion")
     gitFilePatches = false
 
-    val fork = forks.register("chiyogami") {
+    val fork = forks.register("minogami") {
         upstream.patchDir("paperServer") {
             upstreamPath = "paper-server"
             excludes = setOf("src/minecraft", "patches", "build.gradle.kts")
-            patchesDir = rootDirectory.dir("chiyogami-server/paper-patches")
+            patchesDir = rootDirectory.dir("minogami-server/paper-patches")
             outputDir = rootDirectory.dir("paper-server")
         }
     }
@@ -133,7 +133,7 @@ abstract class MockitoAgentProvider : CommandLineArgumentProvider {
 }
 
 dependencies {
-    implementation(project(":chiyogami-api"))
+    implementation(project(":minogami-api"))
     implementation("com.github.bea4dev:ChiyogamiLib:793983cef1")
     implementation(platform("ca.spottedleaf.leafpile:bom:1.3.0"))
     implementation("ca.spottedleaf.leafpile:common")

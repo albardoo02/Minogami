@@ -5,14 +5,14 @@ Subject: [PATCH] thread safe teleport
 
 
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 5cc94652112c67ca4e7ae6e8b324e9c9f8908d7d..e1ad645eee75f1bb3e874d17fc38e15e5f9baa15 100644
+index 5cc94652112c67ca4e7ae6e8b324e9c9f8908d7d..c3fdc6c94917b026670b0565512a256c50297583 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -4285,6 +4285,7 @@ public abstract class Entity
      }
  
      private @Nullable Entity teleportCrossDimension(final ServerLevel oldLevel, final ServerLevel newLevel, final TeleportTransition transition) {
-+        java.util.function.Supplier<Entity> teleportTask = () -> { // Chiyogami - thread safe teleport
++        java.util.function.Supplier<Entity> teleportTask = () -> { // Minogami - thread safe teleport
          List<Entity> oldPassengers = this.getPassengers();
          List<Entity> newPassengers = new ArrayList<>(oldPassengers.size());
          this.ejectPassengers();
@@ -20,10 +20,10 @@ index 5cc94652112c67ca4e7ae6e8b324e9c9f8908d7d..e1ad645eee75f1bb3e874d17fc38e15e
          this.teleportSpectators(transition, oldLevel);
          profiler.pop();
          return newEntity;
-+        // Chiyogami start - thread safe teleport
++        // Minogami start - thread safe teleport
 +        };
-+        return this.level().worldThread.runWorldTaskThreadSafely(newLevel.worldThread, new world.chiyogami.thread.WorldTask<>(teleportTask), "NMS Entity teleport");
-+        // Chiyogami end
++        return this.level().worldThread.runWorldTaskThreadSafely(newLevel.worldThread, new world.minogami.thread.WorldTask<>(teleportTask), "NMS Entity teleport");
++        // Minogami end
      }
  
      protected void teleportSpectators(final TeleportTransition transition, final ServerLevel oldLevel) {

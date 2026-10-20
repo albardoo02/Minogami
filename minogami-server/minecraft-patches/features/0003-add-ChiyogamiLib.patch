@@ -5,26 +5,26 @@ Subject: [PATCH] add ChiyogamiLib
 
 
 diff --git a/net/minecraft/server/Main.java b/net/minecraft/server/Main.java
-index aa7f2ba4d931f98ce15c52dc2b99f07504149582..5b04587cc3bb48211d43764a3a537083aef5baf9 100644
+index aa7f2ba4d931f98ce15c52dc2b99f07504149582..5c6af788224fa259129956f1f6e86f1f98c6f962 100644
 --- a/net/minecraft/server/Main.java
 +++ b/net/minecraft/server/Main.java
 @@ -68,6 +68,7 @@ public class Main {
      @SuppressForbidden(reason = "System.out needed before bootstrap")
      public static void main(final OptionSet options) { // CraftBukkit - replaces main(String[] args)
          io.papermc.paper.log.LogManagerShutdownThread.hook(); // Paper - Improved watchdog support
-+        world.chiyogami.thread.ChiyogamiServerThreadProvider.init(); // Chiyogami - add ChiyogamiLib
++        world.minogami.thread.MinogamiServerThreadProvider.init(); // Minogami - add ChiyogamiLib
          SharedConstants.tryDetectVersion();
          /* CraftBukkit start - Replace everything
          OptionParser parser = new OptionParser();
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index ef39e7301cdb70e006c80d74b48a76306dfc75de..ba8ebc9b531e291c22a0c62656bf25e790eaa9ef 100644
+index d70d1af02ea1536e87f9192fba0d158dddfc3daf..9c5ae2b9cc1b0635db35676d61cb4c862cb4ddcf 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -457,6 +457,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
      @Override
      public final void moonrise$executeMidTickTasks() {
-+        if (!world.chiyogami.chiyogamilib.ChiyogamiLib.isMainThread()) { return; } // Chiyogami - add ChiyogamiLib
++        if (!world.chiyogami.chiyogamilib.ChiyogamiLib.isMainThread()) { return; } // Minogami - add ChiyogamiLib
          final long startTime = System.nanoTime();
          if ((startTime - this.lastMidTickExecute) <= CHUNK_TASK_QUEUE_BACKOFF_MIN_TIME || (startTime - this.lastMidTickExecuteFailure) <= TASK_EXECUTION_FAILURE_BACKOFF) {
              // it's shown to be bad to constantly hit the queue (chunk loads slow to a crawl), even if no tasks are executed.
@@ -32,7 +32,7 @@ index ef39e7301cdb70e006c80d74b48a76306dfc75de..ba8ebc9b531e291c22a0c62656bf25e7
          this.smoothedTickTimeMillis = this.smoothedTickTimeMillis * 0.8F + (float)tickTime / (float)TimeUtil.NANOSECONDS_PER_MILLISECOND * 0.19999999F;
          this.logTickMethodTime(nano);
          profiler.pop();
-+        world.chiyogami.chiyogamilib.monitor.PerformanceMonitor.setFullServerTickNanoTime(System.nanoTime() - nano); // Chiyogami - add ChiyogamiLib
++        world.chiyogami.chiyogamilib.monitor.PerformanceMonitor.setFullServerTickNanoTime(System.nanoTime() - nano); // Minogami - add ChiyogamiLib
      }
  
      protected void processPacketsAndTick(final boolean sprinting) {
@@ -40,18 +40,18 @@ index ef39e7301cdb70e006c80d74b48a76306dfc75de..ba8ebc9b531e291c22a0c62656bf25e7
          this.updateEffectiveRespawnData();
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
-+        long allWorldServerStartTimeNano = System.nanoTime(); // Chiyogami - add ChiyogamiLib
++        long allWorldServerStartTimeNano = System.nanoTime(); // Minogami - add ChiyogamiLib
          for (ServerLevel level : this.getAllLevels()) {
-             // Chiyogami start - world threading
-             world.chiyogami.thread.WorldThread worldThread = level.worldThread;
+             // Minogami start - world threading
+             world.minogami.thread.WorldThread worldThread = level.worldThread;
 @@ -1800,6 +1803,10 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
              worldThread.setWorldTickRunnable(() -> {
              level.thread = Thread.currentThread();
-             // Chiyogami end
-+            // Chiyogami start - add ChiyogamiLib
+             // Minogami end
++            // Minogami start - add ChiyogamiLib
 +            world.chiyogami.chiyogamilib.scheduler.WorldThreadRunnable.worldThreadHeartBeat(level.getWorld(), currentTick);
 +            long worldServerStartTimeNano = System.nanoTime();
-+            // Chiyogami end
++            // Minogami end
              level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
              level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
              level.updateLagCompensationTick(); // Paper - lag compensation
@@ -59,17 +59,17 @@ index ef39e7301cdb70e006c80d74b48a76306dfc75de..ba8ebc9b531e291c22a0c62656bf25e7
              profiler.pop();
              profiler.pop();
              level.explosionDensityCache.clear(); // Paper - Optimize explosions
-+            // Chiyogami start - add ChiyogamiLib
++            // Minogami start - add ChiyogamiLib
 +            world.chiyogami.chiyogamilib.monitor.PerformanceMonitor.getWorldTickNanoTimeMap().put(level.getWorld().getName(), System.nanoTime() - worldServerStartTimeNano);
-+            // Chiyogami end
-             });} // Chiyogami - world threading
++            // Minogami end
+             });} // Minogami - world threading
          }
-         world.chiyogami.thread.WorldThreadPool.doTick(this.levels.values()); // Chiyogami - world threading
-diff --git a/world/chiyogami/thread/ImplConcurrentTaskHandler.java b/world/chiyogami/thread/ImplConcurrentTaskHandler.java
-index 1082936c93dc52f26df81e534729153e2924758c..4dffedea137f28a110adf38ee1a80914bfdb0259 100644
---- a/world/chiyogami/thread/ImplConcurrentTaskHandler.java
-+++ b/world/chiyogami/thread/ImplConcurrentTaskHandler.java
-@@ -3,6 +3,7 @@ package world.chiyogami.thread;
+         world.minogami.thread.WorldThreadPool.doTick(this.levels.values()); // Minogami - world threading
+diff --git a/world/minogami/thread/ImplConcurrentTaskHandler.java b/world/minogami/thread/ImplConcurrentTaskHandler.java
+index 39b8c55b4aa4564639d005003b4929c648e09af1..2b29514aa0a9bf02b70a7960e126007ff096898d 100644
+--- a/world/minogami/thread/ImplConcurrentTaskHandler.java
++++ b/world/minogami/thread/ImplConcurrentTaskHandler.java
+@@ -3,6 +3,7 @@ package world.minogami.thread;
  import org.bukkit.Bukkit;
  import org.bukkit.World;
  import org.bukkit.craftbukkit.CraftWorld;
@@ -86,12 +86,12 @@ index 1082936c93dc52f26df81e534729153e2924758c..4dffedea137f28a110adf38ee1a80914
              return supplier.get();
          }
          
-diff --git a/world/chiyogami/thread/ImplWorldThreadLockHandler.java b/world/chiyogami/thread/ImplWorldThreadLockHandler.java
-index 965f45ee661db1465f7a3d4995a25301fc7476dc..49e20cdb8b74106894e6f001b89ad0c8f8d354b5 100644
---- a/world/chiyogami/thread/ImplWorldThreadLockHandler.java
-+++ b/world/chiyogami/thread/ImplWorldThreadLockHandler.java
+diff --git a/world/minogami/thread/ImplWorldThreadLockHandler.java b/world/minogami/thread/ImplWorldThreadLockHandler.java
+index 6c898f7abcb3658463cef092f350661287cbec87..ecb23fb0899af69240aca7773a956bbaf2d67bce 100644
+--- a/world/minogami/thread/ImplWorldThreadLockHandler.java
++++ b/world/minogami/thread/ImplWorldThreadLockHandler.java
 @@ -1,6 +1,7 @@
- package world.chiyogami.thread;
+ package world.minogami.thread;
  
  import org.bukkit.Bukkit;
 +import world.chiyogami.chiyogamilib.ChiyogamiLib;

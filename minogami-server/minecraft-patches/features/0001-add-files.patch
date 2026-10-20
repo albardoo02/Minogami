@@ -4,13 +4,13 @@ Date: Tue, 29 Apr 2025 01:19:26 +0900
 Subject: [PATCH] add files
 
 
-diff --git a/world/chiyogami/bridge/ParallelBridge.java b/world/chiyogami/bridge/ParallelBridge.java
+diff --git a/world/minogami/bridge/ParallelBridge.java b/world/minogami/bridge/ParallelBridge.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..98fb8adae48085586068f6c7ef056857cf8a9b31
+index 0000000000000000000000000000000000000000..a92dc5e816dcd95745a0d505d762978ea1c70bb8
 --- /dev/null
-+++ b/world/chiyogami/bridge/ParallelBridge.java
++++ b/world/minogami/bridge/ParallelBridge.java
 @@ -0,0 +1,21 @@
-+package world.chiyogami.bridge;
++package world.minogami.bridge;
 +
 +import org.bukkit.entity.Player;
 +
@@ -31,13 +31,13 @@ index 0000000000000000000000000000000000000000..98fb8adae48085586068f6c7ef056857
 +    public static void removeParallelEntityMoveHandler(Player player){parallelEntityMoveHandlerMap.remove(player);}
 +    
 +}
-diff --git a/world/chiyogami/bridge/ParallelEntityMoveHandler.java b/world/chiyogami/bridge/ParallelEntityMoveHandler.java
+diff --git a/world/minogami/bridge/ParallelEntityMoveHandler.java b/world/minogami/bridge/ParallelEntityMoveHandler.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5e2e8630ffa8f73b5bcf6144eb79fd1095b3f11d
+index 0000000000000000000000000000000000000000..6871a072f18614931b6b6942bc328eafcbcdabe0
 --- /dev/null
-+++ b/world/chiyogami/bridge/ParallelEntityMoveHandler.java
++++ b/world/minogami/bridge/ParallelEntityMoveHandler.java
 @@ -0,0 +1,24 @@
-+package world.chiyogami.bridge;
++package world.minogami.bridge;
 +
 +import org.bukkit.entity.Player;
 +import org.bukkit.util.BoundingBox;
@@ -61,26 +61,26 @@ index 0000000000000000000000000000000000000000..5e2e8630ffa8f73b5bcf6144eb79fd10
 +    
 +}
 +
-diff --git a/world/chiyogami/config/ChiyogamiConfig.java b/world/chiyogami/config/ChiyogamiConfig.java
+diff --git a/world/minogami/config/MinogamiConfig.java b/world/minogami/config/MinogamiConfig.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..363898ae9a5eba416da181077fdceaee194c1bd5
+index 0000000000000000000000000000000000000000..4da2f6f6079a8bd2d3f8bc58bf459fb516b8af4d
 --- /dev/null
-+++ b/world/chiyogami/config/ChiyogamiConfig.java
++++ b/world/minogami/config/MinogamiConfig.java
 @@ -0,0 +1,116 @@
-+package world.chiyogami.config;
++package world.minogami.config;
 +
 +
 +import io.papermc.paper.plugin.manager.PaperEventManager;
 +import org.bukkit.configuration.file.YamlConfiguration;
 +import org.bukkit.plugin.SimplePluginManager;
-+import world.chiyogami.log.ChiyogamiLogger;
-+import world.chiyogami.thread.WorldThreadPool;
++import world.minogami.log.MinogamiLogger;
++import world.minogami.thread.WorldThreadPool;
 +
 +import java.io.File;
 +import java.util.ArrayList;
 +import java.util.List;
 +
-+public final class ChiyogamiConfig {
++public final class MinogamiConfig {
 +    
 +    private static final int VERSION = 2;
 +    
@@ -88,7 +88,7 @@ index 0000000000000000000000000000000000000000..363898ae9a5eba416da181077fdceaee
 +    
 +    private static final ConfigComponent<Integer> CONFIG_VERSION = new ConfigComponent<>("config-version", VERSION, VERSION);
 +    private static final ConfigComponent<Integer> MAX_WORLD_THREADS = new ConfigComponent<>("max-world-threads", 0, 0);
-+    private static final ConfigComponent<Boolean> SHOW_CHIYOGAMI_LOG = new ConfigComponent<>("show-detail-log", true, 0);
++    private static final ConfigComponent<Boolean> SHOW_MINOGAMI_LOG = new ConfigComponent<>("show-detail-log", true, 0);
 +    private static final ConfigComponent<Boolean> SYNCHRONIZED_EVENT = new ConfigComponent<>("synchronized-event", true, 1);
 +    
 +    
@@ -151,7 +151,7 @@ index 0000000000000000000000000000000000000000..363898ae9a5eba416da181077fdceaee
 +    public static void load(){
 +        try {
 +            
-+            File file = new File("chiyogami.yml");
++            File file = new File("minogami.yml");
 +            
 +            YamlConfiguration yml;
 +            if (file.exists()) {
@@ -167,7 +167,7 @@ index 0000000000000000000000000000000000000000..363898ae9a5eba416da181077fdceaee
 +            //WorkMode.MULTI_THREAD_TICK = MAX_WORLD_THREADS.getValue() != 1;
 +            WorldThreadPool.setMaxPoolSize(MAX_WORLD_THREADS.getValue());
 +            
-+            ChiyogamiLogger.isShowLogs = SHOW_CHIYOGAMI_LOG.getValue();
++            MinogamiLogger.isShowLogs = SHOW_MINOGAMI_LOG.getValue();
 +            
 +            PaperEventManager.synchronizedEvent = SYNCHRONIZED_EVENT.getValue();
 +            
@@ -178,76 +178,41 @@ index 0000000000000000000000000000000000000000..363898ae9a5eba416da181077fdceaee
 +    
 +    public static int getMaxWorldThreads() {return MAX_WORLD_THREADS.getValue();}
 +    
-+    public static boolean isShowLogs() {return SHOW_CHIYOGAMI_LOG.getValue();}
++    public static boolean isShowLogs() {return SHOW_MINOGAMI_LOG.getValue();}
 +    
 +    public static boolean isSynchronizedEvent(){return SYNCHRONIZED_EVENT.getValue();}
 +}
 +
-diff --git a/world/chiyogami/log/ChiyogamiLogger.java b/world/chiyogami/log/ChiyogamiLogger.java
+diff --git a/world/minogami/log/MinogamiLogger.java b/world/minogami/log/MinogamiLogger.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..20cc1bc1cf14f1bd093b59ff6475516b82662c01
+index 0000000000000000000000000000000000000000..7150c94f467f2ebc6462927e080a028e423dad34
 --- /dev/null
-+++ b/world/chiyogami/log/ChiyogamiLogger.java
++++ b/world/minogami/log/MinogamiLogger.java
 @@ -0,0 +1,17 @@
-+package world.chiyogami.log;
++package world.minogami.log;
 +
 +
 +import net.minecraft.server.MinecraftServer;
 +
-+public class ChiyogamiLogger {
++public class MinogamiLogger {
 +    
 +    public static boolean isShowLogs = true;
 +    
 +    public static void info(String string){
 +        if(!isShowLogs) return;
-+        string = "Chiyogami : INFO > " + string;
++        string = "Minogami : INFO > " + string;
 +        MinecraftServer.LOGGER.info(string);
 +    }
 +    
 +}
 +
-diff --git a/world/chiyogami/thread/ChiyogamiServerThreadProvider.java b/world/chiyogami/thread/ChiyogamiServerThreadProvider.java
+diff --git a/world/minogami/thread/ImplConcurrentTaskHandler.java b/world/minogami/thread/ImplConcurrentTaskHandler.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb8b3e614d42ed5aea58c043ce7b2112979af023
+index 0000000000000000000000000000000000000000..39b8c55b4aa4564639d005003b4929c648e09af1
 --- /dev/null
-+++ b/world/chiyogami/thread/ChiyogamiServerThreadProvider.java
-@@ -0,0 +1,29 @@
-+package world.chiyogami.thread;
-+
-+import net.minecraft.server.MinecraftServer;
-+import org.bukkit.World;
-+import org.bukkit.craftbukkit.CraftWorld;
-+import world.chiyogami.chiyogamilib.ChiyogamiLib;
-+import world.chiyogami.chiyogamilib.ServerThreadProvider;
-+
-+public class ChiyogamiServerThreadProvider {
-+    public static void init() {
-+        try {
-+            var providerField = ChiyogamiLib.class.getDeclaredField("serverThreadProvider");
-+            providerField.setAccessible(true);
-+            providerField.set(null, new ServerThreadProvider() {
-+                @Override
-+                public Thread getMainThread() {
-+                    return MinecraftServer.getServer().getRunningThread();
-+                }
-+
-+                @Override
-+                public Thread getWorldThread(World world) {
-+                    return ((CraftWorld) world).getHandle().thread;
-+                }
-+            });
-+        } catch (Exception e) {
-+            throw new RuntimeException(e);
-+        }
-+    }
-+}
-diff --git a/world/chiyogami/thread/ImplConcurrentTaskHandler.java b/world/chiyogami/thread/ImplConcurrentTaskHandler.java
-new file mode 100644
-index 0000000000000000000000000000000000000000..1082936c93dc52f26df81e534729153e2924758c
---- /dev/null
-+++ b/world/chiyogami/thread/ImplConcurrentTaskHandler.java
++++ b/world/minogami/thread/ImplConcurrentTaskHandler.java
 @@ -0,0 +1,61 @@
-+package world.chiyogami.thread;
++package world.minogami.thread;
 +
 +import org.bukkit.Bukkit;
 +import org.bukkit.World;
@@ -308,13 +273,13 @@ index 0000000000000000000000000000000000000000..1082936c93dc52f26df81e534729153e
 +    }
 +    
 +}
-diff --git a/world/chiyogami/thread/ImplWorldThreadLockHandler.java b/world/chiyogami/thread/ImplWorldThreadLockHandler.java
+diff --git a/world/minogami/thread/ImplWorldThreadLockHandler.java b/world/minogami/thread/ImplWorldThreadLockHandler.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..965f45ee661db1465f7a3d4995a25301fc7476dc
+index 0000000000000000000000000000000000000000..6c898f7abcb3658463cef092f350661287cbec87
 --- /dev/null
-+++ b/world/chiyogami/thread/ImplWorldThreadLockHandler.java
++++ b/world/minogami/thread/ImplWorldThreadLockHandler.java
 @@ -0,0 +1,52 @@
-+package world.chiyogami.thread;
++package world.minogami.thread;
 +
 +import org.bukkit.Bukkit;
 +
@@ -366,13 +331,48 @@ index 0000000000000000000000000000000000000000..965f45ee661db1465f7a3d4995a25301
 +    }
 +    
 +}
-diff --git a/world/chiyogami/thread/WorldTask.java b/world/chiyogami/thread/WorldTask.java
+diff --git a/world/minogami/thread/MinogamiServerThreadProvider.java b/world/minogami/thread/MinogamiServerThreadProvider.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..abcfed510c9143b9c8e8c1487267cb52b4bd2cc2
+index 0000000000000000000000000000000000000000..c21693555e572c6efd67df1d46ba799f9d116d18
 --- /dev/null
-+++ b/world/chiyogami/thread/WorldTask.java
++++ b/world/minogami/thread/MinogamiServerThreadProvider.java
+@@ -0,0 +1,29 @@
++package world.minogami.thread;
++
++import net.minecraft.server.MinecraftServer;
++import org.bukkit.World;
++import org.bukkit.craftbukkit.CraftWorld;
++import world.chiyogami.chiyogamilib.ChiyogamiLib;
++import world.chiyogami.chiyogamilib.ServerThreadProvider;
++
++public class MinogamiServerThreadProvider {
++    public static void init() {
++        try {
++            var providerField = ChiyogamiLib.class.getDeclaredField("serverThreadProvider");
++            providerField.setAccessible(true);
++            providerField.set(null, new ServerThreadProvider() {
++                @Override
++                public Thread getMainThread() {
++                    return MinecraftServer.getServer().getRunningThread();
++                }
++
++                @Override
++                public Thread getWorldThread(World world) {
++                    return ((CraftWorld) world).getHandle().thread;
++                }
++            });
++        } catch (Exception e) {
++            throw new RuntimeException(e);
++        }
++    }
++}
+diff --git a/world/minogami/thread/WorldTask.java b/world/minogami/thread/WorldTask.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8f6419973738b73868ce58a2ee8f9580fff3438c
+--- /dev/null
++++ b/world/minogami/thread/WorldTask.java
 @@ -0,0 +1,16 @@
-+package world.chiyogami.thread;
++package world.minogami.thread;
 +
 +import java.util.concurrent.CompletableFuture;
 +import java.util.function.Supplier;
@@ -388,17 +388,17 @@ index 0000000000000000000000000000000000000000..abcfed510c9143b9c8e8c1487267cb52
 +    public void complete(){super.complete(task.get());}
 +    
 +}
-diff --git a/world/chiyogami/thread/WorldThread.java b/world/chiyogami/thread/WorldThread.java
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..7b86b4011674beee03c22fc43965e0581d22c483
+index 0000000000000000000000000000000000000000..7780a4ce210a449214acbf0375b8d9926dfb1049
 --- /dev/null
-+++ b/world/chiyogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
 @@ -0,0 +1,229 @@
-+package world.chiyogami.thread;
++package world.minogami.thread;
 +
 +import net.minecraft.server.MinecraftServer;
 +import net.minecraft.world.level.Level;
-+import world.chiyogami.log.ChiyogamiLogger;
++import world.minogami.log.MinogamiLogger;
 +
 +import java.util.*;
 +import java.util.concurrent.ExecutionException;
@@ -573,7 +573,7 @@ index 0000000000000000000000000000000000000000..7b86b4011674beee03c22fc43965e058
 +            throw new IllegalStateException("Failed to wait for world task.");
 +        }
 +        
-+        ChiyogamiLogger.info("Try wait " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++        MinogamiLogger.info("Try wait " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
 +
 +        if (level != targetWorldThread.level) {
 +            try {
@@ -595,7 +595,7 @@ index 0000000000000000000000000000000000000000..7b86b4011674beee03c22fc43965e058
 +                                This operation cannot be performed because it may cause a deadlock.""");
 +                        }
 +
-+                        ChiyogamiLogger.info("Wait for " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++                        MinogamiLogger.info("Wait for " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
 +                        targetWorldThread.worldTasks.add(worldTask);
 +                        this.waitFor = targetWorldThread;
 +                    } else {
@@ -623,17 +623,17 @@ index 0000000000000000000000000000000000000000..7b86b4011674beee03c22fc43965e058
 +    }
 +    
 +}
-diff --git a/world/chiyogami/thread/WorldThreadPool.java b/world/chiyogami/thread/WorldThreadPool.java
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ff14d4a3c73eb1f58615695b600b77371069b354
+index 0000000000000000000000000000000000000000..531ee72582a481bee26ccbe713ec6f0858a6748f
 --- /dev/null
-+++ b/world/chiyogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
 @@ -0,0 +1,91 @@
-+package world.chiyogami.thread;
++package world.minogami.thread;
 +
 +import ca.spottedleaf.moonrise.common.util.TickThread;
 +import net.minecraft.server.level.ServerLevel;
-+import world.chiyogami.config.ChiyogamiConfig;
++import world.minogami.config.MinogamiConfig;
 +
 +import java.util.*;
 +import java.util.concurrent.*;
@@ -670,7 +670,7 @@ index 0000000000000000000000000000000000000000..ff14d4a3c73eb1f58615695b600b7737
 +    }
 +
 +    public static void init() {
-+        int poolSize = ChiyogamiConfig.getMaxWorldThreads();
++        int poolSize = MinogamiConfig.getMaxWorldThreads();
 +        if (poolSize == 0) {
 +            poolSize = 4;
 +        }

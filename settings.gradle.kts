@@ -12,8 +12,8 @@ plugins {
 
 rootProject.name = "minogami"
 
-include("chiyogami-api")
-include("chiyogami-server")
+include("minogami-api")
+include("minogami-server")
 
 gradle.lifecycle.beforeProject {
     val mcVersion = providers.gradleProperty("mcVersion").get().trim()

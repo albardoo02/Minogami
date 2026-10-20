@@ -1,4 +1,4 @@
-package world.chiyogami.thread;
+package world.minogami.thread;
 
 import org.bukkit.World;
 import java.util.function.Supplier;

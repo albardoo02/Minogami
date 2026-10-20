@@ -1,11 +1,12 @@
-package world.chiyogami.thread;
+package world.minogami.thread;
 
-abstract class WorldThreadLockHandler {
+public abstract class WorldThreadLockHandler {
     
     public static WorldThreadLockHandler INSTANCE;
     
-    
-    protected WorldThreadLockHandler() {INSTANCE = this;}
+    protected WorldThreadLockHandler() {
+        INSTANCE = this;
+    }
     
     public abstract void lock(WorldThreadSafeLock worldThreadSafeLock);
     

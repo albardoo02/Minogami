@@ -1,0 +1,277 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 13:46:01 +0900
+Subject: [PATCH] Add event lock bypass and resilience safeguards
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index ea4cc487002a0edc54cc49bfbecf72be156b6af7..80e0b600cccece31eeffd0f40d54e5716759fba6 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -889,32 +889,40 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             }
+ 
+             io.papermc.paper.entity.activation.ActivationRange.activateEntities(this); // Paper - EAR
+-            this.entityTickList
+-                .forEach(
+-                    entity -> {
+-                        if (!entity.isRemoved()) {
+-                            if (!tickRateManager.isEntityFrozen(entity)) {
+-                                profiler.push("checkDespawn");
+-                                entity.checkDespawn();
+-                                profiler.pop();
+-                                if (true) { // Paper - rewrite chunk system
+-                                    Entity vehicle = entity.getVehicle();
+-                                    if (vehicle != null) {
+-                                        if (!vehicle.isRemoved() && vehicle.hasPassenger(entity)) {
+-                                            return;
++            try {
++                this.entityTickList
++                    .forEach(
++                        entity -> {
++                            try {
++                                if (!entity.isRemoved()) {
++                                    if (!tickRateManager.isEntityFrozen(entity)) {
++                                        profiler.push("checkDespawn");
++                                        entity.checkDespawn();
++                                        profiler.pop();
++                                        if (true) { // Paper - rewrite chunk system
++                                            Entity vehicle = entity.getVehicle();
++                                            if (vehicle != null) {
++                                                if (!vehicle.isRemoved() && vehicle.hasPassenger(entity)) {
++                                                    return;
++                                                }
++
++                                                entity.stopRiding();
++                                            }
++
++                                            profiler.push("tick");
++                                            this.guardEntityTick(this::tickNonPassenger, entity);
++                                            profiler.pop();
+                                         }
+-
+-                                        entity.stopRiding();
+                                     }
+-
+-                                    profiler.push("tick");
+-                                    this.guardEntityTick(this::tickNonPassenger, entity);
+-                                    profiler.pop();
+                                 }
++                            } catch (Throwable t) {
++                                world.minogami.log.SafeguardLogger.logSafeguardException("entityTick (" + entity.getScoreboardName() + ")", t);
+                             }
+                         }
+-                    }
+-                );
++                    );
++            } catch (Throwable t) {
++                world.minogami.log.SafeguardLogger.logSafeguardException("ServerLevel entityTickList forEach", t);
++            }
+             if (this.paperConfig().unsupportedSettings.ticking.blockEntities) { // Paper - option to disable ticking
+             profiler.popPush("blockEntities");
+             this.tickBlockEntities();
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 02b8ebf6c1b30b98445fd5dc47f1913f3c4a33a2..60339e446fd869e3bf0a5d7c21ffef3defa2935e 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1,5 +1,7 @@
+ package net.minecraft.world.level;
+ 
++import world.minogami.log.SafeguardLogger;
++
+ import com.google.common.collect.Lists;
+ import com.mojang.serialization.Codec;
+ import java.io.IOException;
+@@ -1509,7 +1511,11 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+             if (ticker.isRemoved()) {
+                 toRemove.add(ticker); // Paper - Fix MC-117075 use removeAll
+             } else if (tickBlockEntities && this.shouldTickBlocksAt(ticker.getPos())) {
+-                ticker.tick();
++                try {
++                    ticker.tick();
++                } catch (Throwable t) {
++                    SafeguardLogger.logSafeguardException("BlockEntity tick at " + ticker.getPos(), t);
++                }
+                 // Paper start - rewrite chunk system
+                 if ((++tickedEntities & 7) == 0) {
+                     ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)(Level)(Object)this).moonrise$midTickTasks();
+@@ -1526,6 +1532,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         try {
+             tick.accept(entity);
+         } catch (Throwable t) {
++            SafeguardLogger.logSafeguardException("Entity tick (" + entity.getScoreboardName() + ")", t);
+             // Paper start - Prevent block entity and entity crashes
+             final String msg = String.format("Entity threw exception at %s:%s,%s,%s", io.papermc.paper.util.MCUtil.getLevelName(entity.level()), entity.getX(), entity.getY(), entity.getZ());
+             MinecraftServer.LOGGER.error(msg, t);
+diff --git a/world/minogami/config/EventLockBypass.java b/world/minogami/config/EventLockBypass.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..73c3b398b2dc3916b32db7c58c6e8059e09503d1
+--- /dev/null
++++ b/world/minogami/config/EventLockBypass.java
+@@ -0,0 +1,49 @@
++package world.minogami.config;
++
++import java.util.*;
++import java.util.concurrent.ConcurrentHashMap;
++
++public final class EventLockBypass {
++    private static volatile Set<String> bypassedEventClasses = Collections.emptySet();
++    private static volatile List<String> bypassedPluginPrefixes = Collections.emptyList();
++
++    private static final Map<Class<?>, Boolean> eventClassCache = new ConcurrentHashMap<>();
++    private static final Map<String, Boolean> pluginNameCache = new ConcurrentHashMap<>();
++
++    public static void setConfig(List<String> eventClasses, List<String> pluginPrefixes) {
++        bypassedEventClasses = new HashSet<>(eventClasses != null ? eventClasses : Collections.emptyList());
++        bypassedPluginPrefixes = new ArrayList<>(pluginPrefixes != null ? pluginPrefixes : Collections.emptyList());
++        eventClassCache.clear();
++        pluginNameCache.clear();
++    }
++
++    public static boolean isEventBypassed(Class<?> eventClass) {
++        if (eventClass == null || bypassedEventClasses.isEmpty()) {
++            return false;
++        }
++        return eventClassCache.computeIfAbsent(eventClass, clazz -> {
++            Class<?> current = clazz;
++            while (current != null && current != Object.class) {
++                if (bypassedEventClasses.contains(current.getName())) {
++                    return true;
++                }
++                current = current.getSuperclass();
++            }
++            return false;
++        });
++    }
++
++    public static boolean isPluginBypassed(String pluginName) {
++        if (pluginName == null || bypassedPluginPrefixes.isEmpty()) {
++            return false;
++        }
++        return pluginNameCache.computeIfAbsent(pluginName, name -> {
++            for (String prefix : bypassedPluginPrefixes) {
++                if (name.equalsIgnoreCase(prefix) || name.startsWith(prefix)) {
++                    return true;
++                }
++            }
++            return false;
++        });
++    }
++}
+diff --git a/world/minogami/config/MinogamiConfig.java b/world/minogami/config/MinogamiConfig.java
+index fbd383003485b9fbff00fcf4e0a6317324610262..a80163c21f7d90f68d1358b35f284538199b0a7b 100644
+--- a/world/minogami/config/MinogamiConfig.java
++++ b/world/minogami/config/MinogamiConfig.java
+@@ -11,6 +11,8 @@ import java.util.ArrayList;
+ import java.util.List;
+ 
+ public final class MinogamiConfig {
++    private static List<String> bypassEvents = new ArrayList<>();
++    private static List<String> bypassPlugins = new ArrayList<>();
+     
+     private static final int VERSION = 2;
+     
+diff --git a/world/minogami/log/SafeguardLogger.java b/world/minogami/log/SafeguardLogger.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6fc3c4db0dd170d9952107a02e568e9c9cc391e4
+--- /dev/null
++++ b/world/minogami/log/SafeguardLogger.java
+@@ -0,0 +1,40 @@
++package world.minogami.log;
++
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.logging.Level;
++import org.bukkit.Bukkit;
++
++public final class SafeguardLogger {
++    private static final ConcurrentHashMap<String, RateLimitEntry> rateLimitMap = new ConcurrentHashMap<>();
++    private static final long RATE_LIMIT_WINDOW_MS = 5000L;
++
++    private static class RateLimitEntry {
++        long lastLoggedTime = 0;
++        final AtomicInteger suppressedCount = new AtomicInteger(0);
++    }
++
++    public static void logSafeguardException(String context, Throwable t) {
++        if (t == null) return;
++        String key = context + ":" + t.getClass().getName() + ":" + (t.getMessage() != null ? t.getMessage() : "");
++        long now = System.currentTimeMillis();
++        RateLimitEntry entry = rateLimitMap.computeIfAbsent(key, k -> new RateLimitEntry());
++
++        synchronized (entry) {
++            if (now - entry.lastLoggedTime >= RATE_LIMIT_WINDOW_MS) {
++                int suppressed = entry.suppressedCount.getAndSet(0);
++                entry.lastLoggedTime = now;
++                String msg = "[Minogami-Safeguard] Caught & suppressed exception in " + context +
++                        (suppressed > 0 ? " (" + suppressed + " similar suppressed in last 5s)" : "");
++                if (Bukkit.getServer() != null) {
++                    Bukkit.getLogger().log(Level.WARNING, msg, t);
++                } else {
++                    System.err.println(msg);
++                    t.printStackTrace();
++                }
++            } else {
++                entry.suppressedCount.incrementAndGet();
++            }
++        }
++    }
++}
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index d1f18d2fe3050289b6350642b7547d033948144f..b47f12fe10884904097b53b949942fe7f78fdd6a 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -66,18 +66,18 @@ public class WorldThread implements Runnable {
+             LOCK.unlock();
+         }
+         
+-        worldTickRunnable.run();
++        executeWorldTasks();
+         
++        try {
++            worldTickRunnable.run();
++        } catch (Throwable t) {
++            world.minogami.log.SafeguardLogger.logSafeguardException("WorldTickThread[" + tick + "]", t);
++        }
++        
++        executeWorldTasks();
+         try {
+             LOCK.lock();
+             isProcessingWorldTick = false;
+-            
+-            if (worldTasks.size() == 0) return;
+-            
+-            for (WorldTask<?> worldTask : worldTasks) {
+-                worldTask.complete();
+-            }
+-            worldTasks.clear();
+         } finally {
+             LOCK.unlock();
+         }
+@@ -151,5 +151,25 @@ public class WorldThread implements Runnable {
+             throw new IllegalStateException("Failed to wait for world task.");
+         }
+     }
+-    
++
++    public void executeWorldTasks() {
++        List<WorldTask<?>> tasksToRun = null;
++        try {
++            LOCK.lock();
++            if (worldTasks.isEmpty()) return;
++            tasksToRun = new ArrayList<>(worldTasks);
++            worldTasks.clear();
++        } finally {
++            LOCK.unlock();
++        }
++        if (tasksToRun != null) {
++            for (WorldTask<?> task : tasksToRun) {
++                try {
++                    task.complete();
++                } catch (Throwable t) {
++                    world.minogami.log.SafeguardLogger.logSafeguardException("WorldTask completion", t);
++                }
++            }
++        }
++    }
+ }

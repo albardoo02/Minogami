@@ -5,29 +5,29 @@ Subject: [PATCH] config
 
 
 diff --git a/net/minecraft/server/dedicated/DedicatedServer.java b/net/minecraft/server/dedicated/DedicatedServer.java
-index 0b6d7f99edde802cb464baa5a4b2b4a4dcce684a..f0448ca353aa8624b7445b13ada94a7ae96e8996 100644
+index 68675926ee85f738b3693a76fc29b80b80c717ed..4ff75d2f9be82ec509b2fbfa385dc2b5181c8baf 100644
 --- a/net/minecraft/server/dedicated/DedicatedServer.java
 +++ b/net/minecraft/server/dedicated/DedicatedServer.java
 @@ -218,6 +218,10 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
              LOGGER.warn("****************************");
          }
          // Paper end - detect running as root
-+        // Chiyogami start - config
-+        world.chiyogami.config.ChiyogamiConfig.load();
-+        world.chiyogami.thread.WorldThreadPool.init();
-+        // Chiyogami end
++        // Minogami start - config
++        world.minogami.config.MinogamiConfig.load();
++        world.minogami.thread.WorldThreadPool.init();
++        // Minogami end
  
          LOGGER.info("Loading properties");
          DedicatedServerProperties properties = this.settings.getProperties();
-diff --git a/world/chiyogami/config/ChiyogamiConfig.java b/world/chiyogami/config/ChiyogamiConfig.java
-index 363898ae9a5eba416da181077fdceaee194c1bd5..844f2b9dcfa38841832e6d4199d9d2e3deb8dcd6 100644
---- a/world/chiyogami/config/ChiyogamiConfig.java
-+++ b/world/chiyogami/config/ChiyogamiConfig.java
-@@ -3,7 +3,6 @@ package world.chiyogami.config;
+diff --git a/world/minogami/config/MinogamiConfig.java b/world/minogami/config/MinogamiConfig.java
+index 4da2f6f6079a8bd2d3f8bc58bf459fb516b8af4d..fbd383003485b9fbff00fcf4e0a6317324610262 100644
+--- a/world/minogami/config/MinogamiConfig.java
++++ b/world/minogami/config/MinogamiConfig.java
+@@ -3,7 +3,6 @@ package world.minogami.config;
  
  import io.papermc.paper.plugin.manager.PaperEventManager;
  import org.bukkit.configuration.file.YamlConfiguration;
 -import org.bukkit.plugin.SimplePluginManager;
- import world.chiyogami.log.ChiyogamiLogger;
- import world.chiyogami.thread.WorldThreadPool;
+ import world.minogami.log.MinogamiLogger;
+ import world.minogami.thread.WorldThreadPool;
  

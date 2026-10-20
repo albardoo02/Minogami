@@ -4,10 +4,10 @@ Date: Tue, 29 Apr 2025 16:05:43 +0900
 Subject: [PATCH] remove WorldThreadRunnable
 
 
-diff --git a/world/chiyogami/thread/WorldThread.java b/world/chiyogami/thread/WorldThread.java
-index 6ff13833c811b392194e8450b1b2f84562fc45ef..1a1492ff4c20bbf94b7d92f0a42216f9c3bceb9c 100644
---- a/world/chiyogami/thread/WorldThread.java
-+++ b/world/chiyogami/thread/WorldThread.java
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index 7780a4ce210a449214acbf0375b8d9926dfb1049..d1f18d2fe3050289b6350642b7547d033948144f 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
 @@ -30,12 +30,6 @@ public class WorldThread implements Runnable {
      
      private Thread currentThread = Thread.currentThread();
@@ -103,10 +103,10 @@ index 6ff13833c811b392194e8450b1b2f84562fc45ef..1a1492ff4c20bbf94b7d92f0a42216f9
          worldTickRunnable.run();
          
          try {
-diff --git a/world/chiyogami/thread/WorldThreadPool.java b/world/chiyogami/thread/WorldThreadPool.java
-index ff14d4a3c73eb1f58615695b600b77371069b354..925b2f22818565e5d0b0c87b1a039993bda1883f 100644
---- a/world/chiyogami/thread/WorldThreadPool.java
-+++ b/world/chiyogami/thread/WorldThreadPool.java
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index 531ee72582a481bee26ccbe713ec6f0858a6748f..ee872d70949c527c2e9cd2da26a4fcc400d351b1 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
 @@ -66,10 +66,6 @@ public class WorldThreadPool {
      
      public static WorldThread getWorldThreadFromCurrentThread() {return worldThreadHashMap.get(Thread.currentThread());}

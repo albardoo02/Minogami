@@ -5,19 +5,19 @@ Subject: [PATCH] add world threading
 
 
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index c3bf41af0273e902f881cc070fcef6dd64abb063..ef39e7301cdb70e006c80d74b48a76306dfc75de 100644
+index c3bf41af0273e902f881cc070fcef6dd64abb063..d70d1af02ea1536e87f9192fba0d158dddfc3daf 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -1794,6 +1794,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
          for (ServerLevel level : this.getAllLevels()) {
-+            // Chiyogami start - world threading
-+            world.chiyogami.thread.WorldThread worldThread = level.worldThread;
++            // Minogami start - world threading
++            world.minogami.thread.WorldThread worldThread = level.worldThread;
 +            if (worldThread.getWorldTickRunnable() == null) {
 +            worldThread.setWorldTickRunnable(() -> {
 +            level.thread = Thread.currentThread();
-+            // Chiyogami end
++            // Minogami end
              level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
              level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
              level.updateLagCompensationTick(); // Paper - lag compensation
@@ -25,21 +25,21 @@ index c3bf41af0273e902f881cc070fcef6dd64abb063..ef39e7301cdb70e006c80d74b48a7630
              profiler.pop();
              profiler.pop();
              level.explosionDensityCache.clear(); // Paper - Optimize explosions
-+            });} // Chiyogami - world threading
++            });} // Minogami - world threading
          }
-+        world.chiyogami.thread.WorldThreadPool.doTick(this.levels.values()); // Chiyogami - world threading
++        world.minogami.thread.WorldThreadPool.doTick(this.levels.values()); // Minogami - world threading
          this.isIteratingOverLevels = false; // Paper - Throw exception on world create while being ticked
  
          profiler.popPush("connection");
 diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
-index c14996f1d8a9ed77a845a464c1789bab0715741b..a8683a2cbc55387dde45c92cea08cb2905aef3c2 100644
+index c14996f1d8a9ed77a845a464c1789bab0715741b..4dbb19cf5b074ef14065b2ac7bedc8fb43e953b5 100644
 --- a/net/minecraft/world/level/Level.java
 +++ b/net/minecraft/world/level/Level.java
 @@ -99,6 +99,7 @@ import org.bukkit.craftbukkit.CraftWorld;
  import org.bukkit.craftbukkit.block.CraftBlockState;
  import org.bukkit.craftbukkit.block.data.CraftBlockData;
  import org.bukkit.entity.SpawnCategory;
-+import world.chiyogami.thread.WorldThread;
++import world.minogami.thread.WorldThread;
  // CraftBukkit end
  
  public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel, ca.spottedleaf.moonrise.patches.chunk_system.world.ChunkSystemEntityGetter { // Paper - rewrite chunk system // Paper - optimise collisions
@@ -48,10 +48,10 @@ index c14996f1d8a9ed77a845a464c1789bab0715741b..a8683a2cbc55387dde45c92cea08cb29
      private final List<TickingBlockEntity> pendingBlockEntityTickers = Lists.newArrayList();
      private boolean tickingBlockEntities;
 -    protected final Thread thread;
-+    // Chiyogami start - world threading
++    // Minogami start - world threading
 +    public Thread thread;
 +    public WorldThread worldThread;
-+    // Chiyogami end
++    // Minogami end
      private final boolean isDebug;
      private int skyDarken;
      protected int randValue = RandomSource.createThreadLocalInstance().nextInt();

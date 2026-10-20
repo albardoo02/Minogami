@@ -11,18 +11,18 @@ paperweight {
 
         patchFile {
             path = "paper-server/build.gradle.kts"
-            outputFile = file("chiyogami-server/build.gradle.kts")
-            patchFile = file("chiyogami-server/build.gradle.kts.patch")
+            outputFile = file("minogami-server/build.gradle.kts")
+            patchFile = file("minogami-server/build.gradle.kts.patch")
         }
         patchFile {
             path = "paper-api/build.gradle.kts"
-            outputFile = file("chiyogami-api/build.gradle.kts")
-            patchFile = file("chiyogami-api/build.gradle.kts.patch")
+            outputFile = file("minogami-api/build.gradle.kts")
+            patchFile = file("minogami-api/build.gradle.kts.patch")
         }
         patchDir("paperApi") {
             upstreamPath = "paper-api"
             excludes = setOf("build.gradle.kts")
-            patchesDir = file("chiyogami-api/paper-patches")
+            patchesDir = file("minogami-api/paper-patches")
             outputDir = file("paper-api")
         }
     }

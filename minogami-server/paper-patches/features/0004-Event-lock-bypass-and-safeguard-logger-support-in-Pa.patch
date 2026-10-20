@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 13:46:10 +0900
+Subject: [PATCH] Event lock bypass and safeguard logger support in
+ PaperEventManager
+
+
+diff --git a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+index 3cd2dfc436ba207ed62d0a774f9633aa3f1a363f..1bd036dc1f29b85db87156ae4cc8f29831f5239a 100644
+--- a/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
++++ b/src/main/java/io/papermc/paper/plugin/manager/PaperEventManager.java
+@@ -26,7 +26,7 @@ import org.jetbrains.annotations.NotNull;
+ 
+ public class PaperEventManager {
+     public static boolean synchronizedEvent; // Chiyogami - config
+-    private final java.util.concurrent.locks.ReentrantLock EVENT_LOCK = new world.chiyogami.thread.WorldThreadSafeLock(true); // Chiyogami - synced event
++    private final java.util.concurrent.locks.ReentrantLock EVENT_LOCK = new world.minogami.thread.WorldThreadSafeLock(true); // Chiyogami - synced event
+ 
+     private final Server server;
+ 
+@@ -34,22 +34,20 @@ public class PaperEventManager {
+         this.server = server;
+     }
+ 
+-    // Chiyogami start - synced event
++    // Minogami start - synced event
+     // SimplePluginManager
+     public void callEvent(@NotNull Event event) {
+         boolean shouldSync = synchronizedEvent && !event.isAsynchronous();
+-        if (shouldSync) {
+-            EVENT_LOCK.lock();
+-            try {
+-                callEventInternal(event);
+-            } finally {
+-                EVENT_LOCK.unlock();
+-            }
++        if (shouldSync && !world.minogami.config.EventLockBypass.isEventBypassed(event.getClass())) {
++            callEventInternal(event, true);
+         } else {
+-            callEventInternal(event);
++            callEventInternal(event, false);
+         }
+     }
+     void callEventInternal(@NotNull Event event) {
++        callEventInternal(event, false);
++    }
++    void callEventInternal(@NotNull Event event, boolean syncListeners) {
+         if (event.isAsynchronous() && this.server.isPrimaryThread()) {
+             throw new IllegalStateException(event.getEventName() + " may only be triggered asynchronously.");
+         } else if (!event.isAsynchronous() && !this.server.isPrimaryThread() && !this.server.isStopping()) {
+@@ -60,15 +58,18 @@ public class PaperEventManager {
+         RegisteredListener[] listeners = handlers.getRegisteredListeners();
+ 
+         for (RegisteredListener registration : listeners) {
+-            if (!registration.getPlugin().isEnabled()) {
++            Plugin plugin = registration.getPlugin();
++            if (!plugin.isEnabled()) {
+                 continue;
+             }
+ 
++            boolean lockThis = syncListeners && !world.minogami.config.EventLockBypass.isPluginBypassed(plugin.getName());
++            if (lockThis) {
++                EVENT_LOCK.lock();
++            }
+             try {
+                 registration.callEvent(event);
+             } catch (AuthorNagException ex) {
+-                Plugin plugin = registration.getPlugin();
+-
+                 if (plugin.isNaggable()) {
+                     plugin.setNaggable(false);
+ 
+@@ -80,10 +81,16 @@ public class PaperEventManager {
+                     ));
+                 }
+             } catch (Throwable ex) {
+-                String msg = "Could not pass event " + event.getEventName() + " to " + registration.getPlugin().getPluginMeta().getDisplayName();
+-                this.server.getLogger().log(Level.SEVERE, msg, ex);
++                world.minogami.log.SafeguardLogger.logSafeguardException("Event " + event.getEventName() + " (" + plugin.getName() + ")", ex);
++                String msg = "Could not pass event " + event.getEventName() + " to " + plugin.getPluginMeta().getDisplayName();
+                 if (!(event instanceof ServerExceptionEvent)) { // We don't want to cause an endless event loop
+-                    this.callEvent(new ServerExceptionEvent(new ServerEventException(msg, ex, registration.getPlugin(), registration.getListener(), event)));
++                    try {
++                        this.callEvent(new ServerExceptionEvent(new ServerEventException(msg, ex, plugin, registration.getListener(), event)));
++                    } catch (Throwable ignored) {}
++                }
++            } finally {
++                if (lockThis) {
++                    EVENT_LOCK.unlock();
+                 }
+             }
+         }
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index e132d12d5cdcde142caa38b06604f5c1d590ac73..9e06b2fa20a8bf4abe42754ed931b6971a76f4ff 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -386,7 +386,7 @@ public final class CraftServer implements Server {
+         this.serverLinks = new CraftServerLinks(console);
+ 
+         Bukkit.setServer(this);
+-        world.chiyogami.thread.ChiyogamiServerThreadProvider.init(); // Chiyogami - add ChiyogamiLib
++        world.minogami.thread.MinogamiServerThreadProvider.init(); // Chiyogami - add ChiyogamiLib
+         // Paper start
+         this.commandMap = new CraftCommandMap(this);
+         this.pluginManager = new SimplePluginManager(this, commandMap);
