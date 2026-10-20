@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:31:12 +0900
+Subject: [PATCH] Optimize WorldThread task execution with double buffering and
+ support BiPredicate move check
+
+
+diff --git a/world/minogami/bridge/ParallelEntityMoveHandler.java b/world/minogami/bridge/ParallelEntityMoveHandler.java
+index 6871a072f18614931b6b6942bc328eafcbcdabe0..e6e914b96b2edecadd67ca1a2b73752cba290513 100644
+--- a/world/minogami/bridge/ParallelEntityMoveHandler.java
++++ b/world/minogami/bridge/ParallelEntityMoveHandler.java
+@@ -6,6 +6,7 @@ import org.bukkit.util.Vector;
+ 
+ import java.util.AbstractMap;
+ import java.util.Map;
++import java.util.function.BiPredicate;
+ import java.util.function.Function;
+ 
+ public class ParallelEntityMoveHandler {
+@@ -13,12 +14,18 @@ public class ParallelEntityMoveHandler {
+     private final Player player;
+     
+     public Function<Map.Entry<BoundingBox, Vector>, Boolean> tryToMoveFunction = null;
++    public BiPredicate<BoundingBox, Vector> tryToMovePredicate = null;
+     
+     public ParallelEntityMoveHandler(Player player){this.player = player;}
+     
+     public boolean tryToMoveBoundingBox(BoundingBox boundingBox, Vector movement) {
+-        return tryToMoveFunction.apply(new AbstractMap.SimpleEntry<>(boundingBox, movement));
++        if (tryToMovePredicate != null) {
++            return tryToMovePredicate.test(boundingBox, movement);
++        }
++        if (tryToMoveFunction != null) {
++            return tryToMoveFunction.apply(new AbstractMap.SimpleEntry<>(boundingBox, movement));
++        }
++        return false;
+     }
+     
+ }
+-
+diff --git a/world/minogami/log/MinogamiLogger.java b/world/minogami/log/MinogamiLogger.java
+index 7150c94f467f2ebc6462927e080a028e423dad34..f315d84d4390cd49dbe81cf31aef8e76c3988670 100644
+--- a/world/minogami/log/MinogamiLogger.java
++++ b/world/minogami/log/MinogamiLogger.java
+@@ -1,7 +1,7 @@
+ package world.minogami.log;
+ 
+-
+ import net.minecraft.server.MinecraftServer;
++import java.util.function.Supplier;
+ 
+ public class MinogamiLogger {
+     
+@@ -13,5 +13,9 @@ public class MinogamiLogger {
+         MinecraftServer.LOGGER.info(string);
+     }
+     
++    public static void info(Supplier<String> supplier){
++        if(!isShowLogs || supplier == null) return;
++        MinecraftServer.LOGGER.info("Minogami : INFO > " + supplier.get());
++    }
++    
+ }
+-
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index 44c56a8282153f06f888371ea17934391e4a1ca6..832b7e2f55a92477c6c40d3f5505f8ec96564ea4 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -17,7 +17,8 @@ public class WorldThread implements Runnable {
+     
+     private Runnable worldTickRunnable;
+     
+-    private final List<WorldTask<?>> worldTasks = new ArrayList<>();
++    private List<WorldTask<?>> worldTasks = new ArrayList<>();
++    private List<WorldTask<?>> executingTasks = new ArrayList<>();
+     
+     private long tick = 0;
+     
+@@ -154,23 +155,26 @@ public class WorldThread implements Runnable {
+     }
+ 
+     public void executeWorldTasks() {
+-        List<WorldTask<?>> tasksToRun = null;
++        List<WorldTask<?>> tasksToRun;
+         try {
+             LOCK.lock();
+             if (worldTasks.isEmpty()) return;
+-            tasksToRun = new ArrayList<>(worldTasks);
+-            worldTasks.clear();
++            tasksToRun = worldTasks;
++            worldTasks = executingTasks;
++            executingTasks = tasksToRun;
+         } finally {
+             LOCK.unlock();
+         }
+-        if (tasksToRun != null) {
+-            for (WorldTask<?> task : tasksToRun) {
++        try {
++            for (int i = 0; i < tasksToRun.size(); i++) {
+                 try {
+-                    task.complete();
++                    tasksToRun.get(i).complete();
+                 } catch (Throwable t) {
+                     world.minogami.log.SafeguardLogger.logSafeguardException("WorldTask completion", t);
+                 }
+             }
++        } finally {
++            tasksToRun.clear();
+         }
+     }
+ }
