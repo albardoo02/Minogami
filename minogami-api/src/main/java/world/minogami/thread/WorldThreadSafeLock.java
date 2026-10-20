@@ -14,14 +14,14 @@ public class WorldThreadSafeLock extends ReentrantLock {
     
     @Override
     public void lock() {
-        WorldThreadLockHandler.INSTANCE.lock(this);
         super.lock();
+        WorldThreadLockHandler.INSTANCE.lock(this);
     }
     
     @Override
     public void unlock() {
-        super.unlock();
         WorldThreadLockHandler.INSTANCE.unlock(this);
+        super.unlock();
     }
     
     @Override

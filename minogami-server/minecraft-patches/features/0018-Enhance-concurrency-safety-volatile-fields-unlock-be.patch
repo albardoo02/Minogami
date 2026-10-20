@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 16:55:03 +0900
+Subject: [PATCH] Enhance concurrency safety: volatile fields,
+ unlock-before-execute, UUID bridge, graceful shutdown
+
+
+diff --git a/world/minogami/bridge/ParallelBridge.java b/world/minogami/bridge/ParallelBridge.java
+index a92dc5e816dcd95745a0d505d762978ea1c70bb8..48485897d377c1f4d72fa89382c3da64b3553b45 100644
+--- a/world/minogami/bridge/ParallelBridge.java
++++ b/world/minogami/bridge/ParallelBridge.java
+@@ -9,13 +9,17 @@ public class ParallelBridge {
+     
+     public static boolean parallelWorldBridge = false;
+     
+-    private static final Map<Player, ParallelEntityMoveHandler> parallelEntityMoveHandlerMap = new ConcurrentHashMap<>();
++    private static final Map<java.util.UUID, ParallelEntityMoveHandler> parallelEntityMoveHandlerMap = new ConcurrentHashMap<>();
+     
+     public static ParallelEntityMoveHandler getParallelEntityMoveHandler(Player player){
+-        if(!parallelWorldBridge) return null;
+-        return parallelEntityMoveHandlerMap.computeIfAbsent(player, ParallelEntityMoveHandler::new);
++        if(!parallelWorldBridge || player == null) return null;
++        return parallelEntityMoveHandlerMap.computeIfAbsent(player.getUniqueId(), uuid -> new ParallelEntityMoveHandler(player));
+     }
+     
+-    public static void removeParallelEntityMoveHandler(Player player){parallelEntityMoveHandlerMap.remove(player);}
++    public static void removeParallelEntityMoveHandler(Player player){
++        if (player != null) {
++            parallelEntityMoveHandlerMap.remove(player.getUniqueId());
++        }
++    }
+     
+ }
+diff --git a/world/minogami/thread/MinogamiServerThreadProvider.java b/world/minogami/thread/MinogamiServerThreadProvider.java
+index c21693555e572c6efd67df1d46ba799f9d116d18..c266da71bfbda7adcb5c637bfe65607669ec83fe 100644
+--- a/world/minogami/thread/MinogamiServerThreadProvider.java
++++ b/world/minogami/thread/MinogamiServerThreadProvider.java
+@@ -19,7 +19,10 @@ public class MinogamiServerThreadProvider {
+ 
+                 @Override
+                 public Thread getWorldThread(World world) {
+-                    return ((CraftWorld) world).getHandle().thread;
++                    if (world == null) return null;
++                    var craftWorld = (CraftWorld) world;
++                    var handle = craftWorld.getHandle();
++                    return handle != null ? handle.thread : null;
+                 }
+             });
+         } catch (Exception e) {
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index c88ceeb49ae5c1b24073fb4151af7da623c57818..e4290542d65431f4023b9d2c2e0bdea1b6e485c3 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -21,13 +21,13 @@ public class WorldThread implements Runnable {
+     
+     private long tick = 0;
+     
+-    private WorldThread waitFor = null;
++    private volatile WorldThread waitFor = null;
+     
+-    private boolean isProcessingWorldTick = false;
++    private volatile boolean isProcessingWorldTick = false;
+     
+     public final ReentrantLock LOCK = new ReentrantLock(false);
+     
+-    private Thread currentThread = Thread.currentThread();
++    private volatile Thread currentThread = Thread.currentThread();
+     
+     public int safeLockCount = 0;
+     
+@@ -113,6 +113,7 @@ public class WorldThread implements Runnable {
+         }
+ 
+         if (level != targetWorldThread.level) {
++            boolean directExecute = false;
+             try {
+                 TASK_SCHEDULING_LOCK.lock();
+                 targetWorldThread.LOCK.lock();
+@@ -138,15 +139,19 @@ public class WorldThread implements Runnable {
+                         targetWorldThread.addWorldTask(worldTask);
+                         this.waitFor = targetWorldThread;
+                     } else {
+-                        worldTask.complete();
++                        directExecute = true;
+                     }
+                 } else {
+-                    worldTask.complete();
++                    directExecute = true;
+                 }
+             } finally {
+                 targetWorldThread.LOCK.unlock();
+                 TASK_SCHEDULING_LOCK.unlock();
+             }
++
++            if (directExecute) {
++                worldTask.complete();
++            }
+         } else {
+             worldTask.complete();
+         }
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index 78657b79b738fe77ee339c530d987c0e6e3bf3ed..86b66cb384d13068c181918d6f6783295ab71930 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
+@@ -39,7 +39,7 @@ public class WorldThreadPool {
+ 
+     public static void init() {
+         int poolSize = MinogamiConfig.getMaxWorldThreads();
+-        if (poolSize == 0) {
++        if (poolSize <= 0) {
+             poolSize = 4;
+         }
+ 
+@@ -69,7 +69,19 @@ public class WorldThreadPool {
+         return worldThreadHashMap.get(Thread.currentThread());
+     }
+     
+-    public static void shutdown(){if(executorService != null) executorService.shutdown();}
++    public static void shutdown() {
++        if (executorService != null) {
++            executorService.shutdown();
++            try {
++                if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
++                    executorService.shutdownNow();
++                }
++            } catch (InterruptedException e) {
++                executorService.shutdownNow();
++                Thread.currentThread().interrupt();
++            }
++        }
++    }
+     
+     public static void doTick(Collection<ServerLevel> serverLevels){
+         List<Future<?>> futures = new ArrayList<>(serverLevels.size());
