@@ -1,0 +1,7 @@
+--- /dev/null
++++ b/world/chiyogami/log/MinogamiLogger.java
+@@ -1,0 +_,4 @@
++package world.chiyogami.log;
++
++public class MinogamiLogger extends ChiyogamiLogger {
++}

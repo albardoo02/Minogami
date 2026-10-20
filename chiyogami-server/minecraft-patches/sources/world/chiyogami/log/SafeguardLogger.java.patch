@@ -10,7 +10,7 @@
 +import java.util.concurrent.atomic.AtomicInteger;
 +
 +public final class SafeguardLogger {
-+    private static final Logger LOGGER = LoggerFactory.getLogger("Chiyogami-Safeguard");
++    private static final Logger LOGGER = LoggerFactory.getLogger("Minogami-Safeguard");
 +    private static final long RATE_LIMIT_WINDOW_MS = 5000L;
 +
 +    private static class RateLimitEntry {
@@ -55,13 +55,13 @@
 +                entry.count.set(0);
 +                entry.lastLogTime = now;
 +                if (suppressed > 0) {
-+                    LOGGER.error("[Safeguard] Caught exception in {} (suppressed {} identical occurrences in last {}s): {}",
++                    LOGGER.error("[Minogami-Safeguard] Caught exception in {} (suppressed {} identical occurrences in last {}s): {}",
 +                            context, suppressed, RATE_LIMIT_WINDOW_MS / 1000, t.getMessage(), t);
 +                } else {
-+                    LOGGER.error("[Safeguard] Caught exception in {}: {}", context, t.getMessage(), t);
++                    LOGGER.error("[Minogami-Safeguard] Caught exception in {}: {}", context, t.getMessage(), t);
 +                }
 +            } else if (currentCount == 1) {
-+                LOGGER.error("[Safeguard] Caught exception in {}: {}", context, t.getMessage(), t);
++                LOGGER.error("[Minogami-Safeguard] Caught exception in {}: {}", context, t.getMessage(), t);
 +            }
 +        }
 +    }

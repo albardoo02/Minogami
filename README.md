@@ -1,40 +1,32 @@
-![chiyogami](https://user-images.githubusercontent.com/34712108/135766838-98102b74-0990-4408-af3d-d576edb0b8fb.png)
+# Minogami (美濃紙)
 
-Chiyogamiは [Paper](https://github.com/PaperMC/Paper) をフォークしたものであり、Spigotプラグインを動作させつつマルチスレッド実行を可能とするMinecraftサーバーソフトです。
-
-[![Support Server](https://img.shields.io/discord/893173646728757268.svg?label=Discord&logo=Discord&colorB=7289da&style=for-the-badge)](https://discord.com/invite/KKQNAPsFR6)
+Minogami（美濃紙）は [Paper](https://github.com/PaperMC/Paper) をベースにした次世代マルチスレッドMinecraftサーバーソフトです（Chiyogamiフォーク）。
+Spigot/Paperプラグイン資産をそのまま活用しつつ、ワールドごとの並行実行、イベント排他ロックバイパス、Tick例外局所捕捉セーフガードを提供します。
 
 > [Download](https://github.com/bea4dev/Chiyogami/releases)
 
-Other versions
+Versions
 ------
+* [26.3 (Current)](https://github.com/bea4dev/Chiyogami/tree/ver/26.3)
 * [26.2](https://github.com/bea4dev/Chiyogami/tree/ver/26.2)
 * [26.1.2](https://github.com/bea4dev/Chiyogami/tree/ver/26.1.2)
 * [1.21.11](https://github.com/bea4dev/Chiyogami/tree/ver/1.21.11)
 * [1.21.8](https://github.com/bea4dev/Chiyogami/tree/ver/1.21.8)
 
-Notes
+Features
 ------
-- [x] このサーバーは開発段階であるため十分なテストがされていません
-- [x] このサーバーを実行する前には必ずワールドデータ等のバックアップをしてください
-- [x] issue等のフィードバックを歓迎します
-
-API
-------
-[ChiyogamiLib](https://github.com/bea4dev/ChiyogamiLib/tree/master)
+- **マルチスレッドワールド実行:** ワールドごとに独立スレッドを割り当て、大規模サーバーでのTPS低下を防ぎます。
+- **イベント排他ロックバイパス:** `minogami.yml` のホワイトリスト指定により、`PlayerMoveEvent` や特定プラグイン（CrackShot, CoreProtect等）のイベントロックをバイパスして並行突っ切り動作を可能にします。
+- **Tick例外セーフガード:** プラグインの非同期例外（`ConcurrentModificationException`等）を局所捕捉し、レートリミットログを出力しながらワールドTickの巻き添えクラッシュを防止します。
+- **クロスワールドテレポート遅延委譲:** 異ワールド間のプレイヤー移動を移動先スレッドのTick冒頭へ安全にハンドオフします。
 
 How to build
 ------
+ビルドを実行するには、git, JDK 25 が必要です。
 
-ビルドを実行するには、git, jdk25が必要です。
+```bash
+./gradlew applyAllPatches
+./gradlew createBundlerJar
+```
 
-1. リポジトリを [ダウンロード](https://codeload.github.com/bea4dev/Chiyogami/zip/refs/heads/ver/1.21) or clone して解凍します。
-2. 解凍したフォルダ内でWindowsの場合はgit-bash、linux or Macの場合はターミナルを開き```./gradlew applyAllPatches```を実行したあと```./gradlew createBundlerJar```を実行します
-3. ```chiyogami-server/build/libs```内にjarファイルが生成されていれば成功です
-
-For developer
-------
-
-このサーバーはワールドにそれぞれ専用のスレッドを割り当て、楽観的に同期を取りつつ動作します。
-
-イベントの発火処理にはデフォルトで排他制御が設けられますが、ワールド間での順序関係は保証されないため注意が必要です。
+`chiyogami-server/build/libs` 内に `minogami-bundler-26.3...jar` が生成されます。
