@@ -5,10 +5,10 @@ Subject: [PATCH] thread safe teleport
 
 
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 1530810cdb74810e37e3e22ce4fcda4ee7511055..989603ad5aab4c9c750fd138f9972a0707afa684 100644
+index 5cc94652112c67ca4e7ae6e8b324e9c9f8908d7d..e1ad645eee75f1bb3e874d17fc38e15e5f9baa15 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
-@@ -4175,6 +4175,7 @@ public abstract class Entity
+@@ -4285,6 +4285,7 @@ public abstract class Entity
      }
  
      private @Nullable Entity teleportCrossDimension(final ServerLevel oldLevel, final ServerLevel newLevel, final TeleportTransition transition) {
@@ -16,7 +16,7 @@ index 1530810cdb74810e37e3e22ce4fcda4ee7511055..989603ad5aab4c9c750fd138f9972a07
          List<Entity> oldPassengers = this.getPassengers();
          List<Entity> newPassengers = new ArrayList<>(oldPassengers.size());
          this.ejectPassengers();
-@@ -4213,6 +4214,10 @@ public abstract class Entity
+@@ -4323,6 +4324,10 @@ public abstract class Entity
          this.teleportSpectators(transition, oldLevel);
          profiler.pop();
          return newEntity;

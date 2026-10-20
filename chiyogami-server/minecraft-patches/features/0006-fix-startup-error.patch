@@ -5,7 +5,7 @@ Subject: [PATCH] fix startup error
 
 
 diff --git a/net/minecraft/server/Main.java b/net/minecraft/server/Main.java
-index 6112ace9853140c7a521c2e62391ae674e3238fe..a4d608d64b7d3477c9144d93547fd3b4f39a1b02 100644
+index 5b04587cc3bb48211d43764a3a537083aef5baf9..aa7f2ba4d931f98ce15c52dc2b99f07504149582 100644
 --- a/net/minecraft/server/Main.java
 +++ b/net/minecraft/server/Main.java
 @@ -68,7 +68,6 @@ public class Main {
@@ -17,7 +17,7 @@ index 6112ace9853140c7a521c2e62391ae674e3238fe..a4d608d64b7d3477c9144d93547fd3b4
          /* CraftBukkit start - Replace everything
          OptionParser parser = new OptionParser();
 diff --git a/net/minecraft/server/dedicated/DedicatedServer.java b/net/minecraft/server/dedicated/DedicatedServer.java
-index f0448ca353aa8624b7445b13ada94a7ae96e8996..85d9c3bc54fdc5705a1656048a1e3efc0d0f8741 100644
+index 8ed1b599e4912949f7bf884385bd613828aca125..965ed9fc2fcacfc48e0266ff7efd7a342babd578 100644
 --- a/net/minecraft/server/dedicated/DedicatedServer.java
 +++ b/net/minecraft/server/dedicated/DedicatedServer.java
 @@ -222,6 +222,10 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
@@ -32,10 +32,10 @@ index f0448ca353aa8624b7445b13ada94a7ae96e8996..85d9c3bc54fdc5705a1656048a1e3efc
          LOGGER.info("Loading properties");
          DedicatedServerProperties properties = this.settings.getProperties();
 diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
-index 914e19c0c70239547629b103b5c1320c5a17ceb6..eb9c87df28b10b8ddc59d4c26003b7c88149da11 100644
+index a8683a2cbc55387dde45c92cea08cb2905aef3c2..13c60e058516a2c780b776baaadc1a0e5c0af048 100644
 --- a/net/minecraft/world/level/Level.java
 +++ b/net/minecraft/world/level/Level.java
-@@ -126,7 +126,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+@@ -124,7 +124,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
      private boolean tickingBlockEntities;
      // Chiyogami start - world threading
      public Thread thread;

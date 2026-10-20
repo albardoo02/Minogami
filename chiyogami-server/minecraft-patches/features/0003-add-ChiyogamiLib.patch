@@ -5,7 +5,7 @@ Subject: [PATCH] add ChiyogamiLib
 
 
 diff --git a/net/minecraft/server/Main.java b/net/minecraft/server/Main.java
-index a4d608d64b7d3477c9144d93547fd3b4f39a1b02..6112ace9853140c7a521c2e62391ae674e3238fe 100644
+index aa7f2ba4d931f98ce15c52dc2b99f07504149582..5b04587cc3bb48211d43764a3a537083aef5baf9 100644
 --- a/net/minecraft/server/Main.java
 +++ b/net/minecraft/server/Main.java
 @@ -68,6 +68,7 @@ public class Main {
@@ -17,10 +17,10 @@ index a4d608d64b7d3477c9144d93547fd3b4f39a1b02..6112ace9853140c7a521c2e62391ae67
          /* CraftBukkit start - Replace everything
          OptionParser parser = new OptionParser();
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index d17fd6a3b39f12c4f178e824c32aedb5bb277bf4..2cb6f35b8db35353803b11ca05ad986c17027fa5 100644
+index ef39e7301cdb70e006c80d74b48a76306dfc75de..ba8ebc9b531e291c22a0c62656bf25e790eaa9ef 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -462,6 +462,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -457,6 +457,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
  
      @Override
      public final void moonrise$executeMidTickTasks() {
@@ -28,7 +28,7 @@ index d17fd6a3b39f12c4f178e824c32aedb5bb277bf4..2cb6f35b8db35353803b11ca05ad986c
          final long startTime = System.nanoTime();
          if ((startTime - this.lastMidTickExecute) <= CHUNK_TASK_QUEUE_BACKOFF_MIN_TIME || (startTime - this.lastMidTickExecuteFailure) <= TASK_EXECUTION_FAILURE_BACKOFF) {
              // it's shown to be bad to constantly hit the queue (chunk loads slow to a crawl), even if no tasks are executed.
-@@ -1668,6 +1669,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1649,6 +1650,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          this.smoothedTickTimeMillis = this.smoothedTickTimeMillis * 0.8F + (float)tickTime / (float)TimeUtil.NANOSECONDS_PER_MILLISECOND * 0.19999999F;
          this.logTickMethodTime(nano);
          profiler.pop();
@@ -36,7 +36,7 @@ index d17fd6a3b39f12c4f178e824c32aedb5bb277bf4..2cb6f35b8db35353803b11ca05ad986c
      }
  
      protected void processPacketsAndTick(final boolean sprinting) {
-@@ -1812,6 +1814,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1793,6 +1795,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
          this.updateEffectiveRespawnData();
  
          this.isIteratingOverLevels = true; // Paper - Throw exception on world create while being ticked
@@ -44,7 +44,7 @@ index d17fd6a3b39f12c4f178e824c32aedb5bb277bf4..2cb6f35b8db35353803b11ca05ad986c
          for (ServerLevel level : this.getAllLevels()) {
              // Chiyogami start - world threading
              world.chiyogami.thread.WorldThread worldThread = level.worldThread;
-@@ -1819,6 +1822,10 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1800,6 +1803,10 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
              worldThread.setWorldTickRunnable(() -> {
              level.thread = Thread.currentThread();
              // Chiyogami end
@@ -55,7 +55,7 @@ index d17fd6a3b39f12c4f178e824c32aedb5bb277bf4..2cb6f35b8db35353803b11ca05ad986c
              level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
              level.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
              level.updateLagCompensationTick(); // Paper - lag compensation
-@@ -1837,6 +1844,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+@@ -1818,6 +1825,9 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
              profiler.pop();
              profiler.pop();
              level.explosionDensityCache.clear(); // Paper - Optimize explosions
