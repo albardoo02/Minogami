@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 17:01:27 +0900
+Subject: [PATCH] Fix async TickThread context violation, set level.thread in
+ run, reset safeLockCount on exit, and shutdown pool in stopServer
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 9c5ae2b9cc1b0635db35676d61cb4c862cb4ddcf..028943e628658f05fb12005e81cdb26dcdf0f35b 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1063,6 +1063,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         try {
+             io.papermc.paper.util.MCUtil.ASYNC_EXECUTOR.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS); // Paper
+         } catch (InterruptedException _) {} // Paper
++        world.minogami.thread.WorldThreadPool.shutdown(); // Minogami - world thread pool shutdown
+         if (org.spigotmc.SpigotConfig.saveUserCacheOnStopOnly) {
+             LOGGER.info("Saving usercache.json");
+             this.services().nameToIdCache().save(false); // Paper - Perf: Async GameProfileCache saving
+diff --git a/world/minogami/thread/ImplConcurrentTaskHandler.java b/world/minogami/thread/ImplConcurrentTaskHandler.java
+index 860bd37e0148bbfb64a188655cb6bba90a2932fb..bd48cd6ae84ba3b7ebd90a3ff859d17a61a7b885 100644
+--- a/world/minogami/thread/ImplConcurrentTaskHandler.java
++++ b/world/minogami/thread/ImplConcurrentTaskHandler.java
+@@ -34,20 +34,10 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+             return supplier.get();
+         }
+         
+-        // Async thread
++        // Async thread - always dispatch to world thread to ensure TickThread context (prevents Moonrise chunk/block-entity errors)
+         if (currentWorldThread == null) {
+-            WorldTask<T> worldTask = null;
+-            try {
+-                targetWorldThread.LOCK.lock();
+-                if (targetWorldThread.isProcessingWorldTick()) {
+-                    worldTask = new WorldTask<>(supplier);
+-                    targetWorldThread.addWorldTask(worldTask);
+-                } else {
+-                    return supplier.get();
+-                }
+-            } finally {
+-                targetWorldThread.LOCK.unlock();
+-            }
++            WorldTask<T> worldTask = new WorldTask<>(supplier);
++            targetWorldThread.addWorldTask(worldTask);
+             
+             try {
+                 return worldTask.get();
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index e4290542d65431f4023b9d2c2e0bdea1b6e485c3..c34e3502d93907a4ebc3a19710cc1af26e4aa0e2 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -58,6 +58,7 @@ public class WorldThread implements Runnable {
+         tick++;
+         
+         currentThread = Thread.currentThread();
++        level.thread = currentThread;
+         WorldThreadPool.setCurrentWorldThread(this);
+         
+         try {
+@@ -84,6 +85,8 @@ public class WorldThread implements Runnable {
+             } finally {
+                 LOCK.unlock();
+             }
++            this.safeLockCount = 0;
++            level.thread = null;
+             WorldThreadPool.clearCurrentWorldThread();
+         }
+     }
