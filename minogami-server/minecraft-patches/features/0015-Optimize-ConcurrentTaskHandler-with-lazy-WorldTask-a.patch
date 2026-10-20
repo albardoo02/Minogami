@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:51:45 +0900
+Subject: [PATCH] Optimize ConcurrentTaskHandler with lazy WorldTask allocation
+ on async thread
+
+
+diff --git a/world/minogami/thread/ImplConcurrentTaskHandler.java b/world/minogami/thread/ImplConcurrentTaskHandler.java
+index c663db5f84f090df49ac7dcfcd614e2947385bf0..1f151b6b76d532a97064fc3c1de376be1429970f 100644
+--- a/world/minogami/thread/ImplConcurrentTaskHandler.java
++++ b/world/minogami/thread/ImplConcurrentTaskHandler.java
+@@ -26,16 +26,16 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+             return supplier.get();
+         }
+         
+-        WorldTask<T> worldTask = new WorldTask<>(supplier);
+-        
+         // Async thread
+         if (currentWorldThread == null) {
++            WorldTask<T> worldTask = null;
+             try {
+                 targetWorldThread.LOCK.lock();
+                 if (targetWorldThread.isProcessingWorldTick()) {
++                    worldTask = new WorldTask<>(supplier);
+                     targetWorldThread.addWorldTask(worldTask);
+                 } else {
+-                    worldTask.complete();
++                    return supplier.get();
+                 }
+             } finally {
+                 targetWorldThread.LOCK.unlock();
+@@ -50,7 +50,7 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+         }
+         
+         // World thread - different world
+-        return currentWorldThread.runWorldTaskThreadSafely(targetWorldThread, worldTask, "Internal error.");
++        return currentWorldThread.runWorldTaskThreadSafely(targetWorldThread, new WorldTask<>(supplier), "Internal error.");
+     }
+     
+ }
