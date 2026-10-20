@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:11:53 +0900
+Subject: [PATCH] Optimize WorldThreadPool with ThreadLocal and non-fair locks
+
+
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index b47f12fe10884904097b53b949942fe7f78fdd6a..8071abc73d15ef6e97102e4635486b7d5cfb26b0 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -11,8 +11,7 @@ import java.util.concurrent.locks.ReentrantLock;
+ 
+ public class WorldThread implements Runnable {
+     
+-    public static final ReentrantLock TASK_SCHEDULING_LOCK = new ReentrantLock(true);
+-    
++    public static final ReentrantLock TASK_SCHEDULING_LOCK = new ReentrantLock(false);
+     
+     private final Level level;
+     
+@@ -26,12 +25,10 @@ public class WorldThread implements Runnable {
+     
+     private boolean isProcessingWorldTick = false;
+     
+-    public final ReentrantLock LOCK = new ReentrantLock(true);
++    public final ReentrantLock LOCK = new ReentrantLock(false);
+     
+     private Thread currentThread = Thread.currentThread();
+     
+-    private final ReentrantLock SCHEDULER_LOCK = new ReentrantLock(true);
+-    
+     public AtomicInteger safeLockCount = new AtomicInteger();
+     
+     public WorldThread(Level level) {
+@@ -57,7 +54,7 @@ public class WorldThread implements Runnable {
+         tick++;
+         
+         currentThread = Thread.currentThread();
+-        WorldThreadPool.addCurrentThreadToWorldThreadHashMap(this);
++        WorldThreadPool.setCurrentWorldThread(this);
+         
+         try {
+             LOCK.lock();
+@@ -103,7 +100,9 @@ public class WorldThread implements Runnable {
+             throw new IllegalStateException("Failed to wait for world task.");
+         }
+         
+-        MinogamiLogger.info("Try wait " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++        if (MinogamiLogger.isShowLogs) {
++            MinogamiLogger.info("Try wait " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++        }
+ 
+         if (level != targetWorldThread.level) {
+             try {
+@@ -125,7 +124,9 @@ public class WorldThread implements Runnable {
+                                 This operation cannot be performed because it may cause a deadlock.""");
+                         }
+ 
+-                        MinogamiLogger.info("Wait for " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++                        if (MinogamiLogger.isShowLogs) {
++                            MinogamiLogger.info("Wait for " + level.getWorld().getName() + " -> " + targetWorldThread.level.getWorld().getName());
++                        }
+                         targetWorldThread.worldTasks.add(worldTask);
+                         this.waitFor = targetWorldThread;
+                     } else {
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index ee872d70949c527c2e9cd2da26a4fcc400d351b1..4ec5a3884a88a7d7e65c664b659684fc68b35e25 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
+@@ -7,7 +7,6 @@ import world.minogami.config.MinogamiConfig;
+ import java.util.*;
+ import java.util.concurrent.*;
+ import java.util.concurrent.atomic.AtomicInteger;
+-import java.util.concurrent.locks.ReentrantLock;
+ import java.util.stream.IntStream;
+ 
+ public class WorldThreadPool {
+@@ -21,21 +20,16 @@ public class WorldThreadPool {
+     
+     public static void setMaxPoolSize(int poolSize) {WorldThreadPool.maxPoolSize = poolSize;}
+     
+-    public static Map<Thread, WorldThread> worldThreadHashMap = new HashMap<>();
+-    
+-    private static final ReentrantLock WORLD_THREAD_HASH_MAP_LOCK = new ReentrantLock(true);
++    private static final ThreadLocal<WorldThread> CURRENT_WORLD_THREAD = new ThreadLocal<>();
++    public static Map<Thread, WorldThread> worldThreadHashMap = new ConcurrentHashMap<>();
+     
++    public static void setCurrentWorldThread(WorldThread worldThread) {
++        CURRENT_WORLD_THREAD.set(worldThread);
++        worldThreadHashMap.put(Thread.currentThread(), worldThread);
++    }
++
+     public static void addCurrentThreadToWorldThreadHashMap(WorldThread worldThread) {
+-        //Copy on write
+-        try {
+-            WORLD_THREAD_HASH_MAP_LOCK.lock();
+-            Thread currentThread = Thread.currentThread();
+-            Map<Thread, WorldThread> copy = new HashMap<>(worldThreadHashMap);
+-            copy.put(currentThread, worldThread);
+-            worldThreadHashMap = copy;
+-        } finally {
+-            WORLD_THREAD_HASH_MAP_LOCK.unlock();
+-        }
++        setCurrentWorldThread(worldThread);
+     }
+ 
+     public static void init() {
+@@ -61,27 +55,29 @@ public class WorldThreadPool {
+     }
+     
+     public static boolean isWorldThread() {
+-        return worldThreadHashMap.containsKey(Thread.currentThread());
++        return CURRENT_WORLD_THREAD.get() != null || worldThreadHashMap.containsKey(Thread.currentThread());
+     }
+     
+-    public static WorldThread getWorldThreadFromCurrentThread() {return worldThreadHashMap.get(Thread.currentThread());}
+-    
++    public static WorldThread getWorldThreadFromCurrentThread() {
++        WorldThread wt = CURRENT_WORLD_THREAD.get();
++        if (wt != null) return wt;
++        return worldThreadHashMap.get(Thread.currentThread());
++    }
+     
+     public static void shutdown(){if(executorService != null) executorService.shutdown();}
+     
+     public static void doTick(Collection<ServerLevel> serverLevels){
+-        Set<Future<?>> futures = new HashSet<>();
++        List<Future<?>> futures = new ArrayList<>(serverLevels.size());
+         for (ServerLevel serverLevel : serverLevels) {
+             Future<?> future = executorService.submit(serverLevel.worldThread);
+             futures.add(future);
+         }
+         
+-        for(Future<?> future : futures){
++        for (int i = 0; i < futures.size(); i++) {
+             try {
+-                future.get();
++                futures.get(i).get();
+             } catch (Exception e){e.printStackTrace();}
+         }
+     }
+     
+ }
+-
