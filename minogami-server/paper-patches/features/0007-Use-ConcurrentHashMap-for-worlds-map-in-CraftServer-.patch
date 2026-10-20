@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 17:09:47 +0900
+Subject: [PATCH] Use ConcurrentHashMap for worlds map in CraftServer to
+ prevent CME
+
+
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index 9e06b2fa20a8bf4abe42754ed931b6971a76f4ff..19c2b0334e44852b2123f77be6743b7414ef2658 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -257,7 +257,7 @@ public final class CraftServer implements Server {
+     private final StructureManager structureManager;
+     final DedicatedServer console;
+     private final DedicatedPlayerList playerList;
+-    private final Map<String, World> worlds = new LinkedHashMap<>();
++    private final Map<String, World> worlds = new java.util.concurrent.ConcurrentHashMap<>();
+     private YamlConfiguration configuration;
+     private YamlConfiguration commandsConfiguration;
+     private final Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));

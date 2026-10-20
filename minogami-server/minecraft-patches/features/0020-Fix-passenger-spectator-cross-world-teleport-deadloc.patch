@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 17:09:56 +0900
+Subject: [PATCH] Fix passenger/spectator cross-world teleport deadlock,
+ shutdown async task hang, and thread pool scaling
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index c3fdc6c94917b026670b0565512a256c50297583..28cd395a823ce477dc86788435e345f888e0d5df 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -4285,7 +4285,7 @@ public abstract class Entity
+     }
+ 
+     private @Nullable Entity teleportCrossDimension(final ServerLevel oldLevel, final ServerLevel newLevel, final TeleportTransition transition) {
+-        java.util.function.Supplier<Entity> teleportTask = () -> { // Minogami - thread safe teleport
++        // Minogami start - decouple oldLevel operations from target world task to prevent passenger/spectator cross-thread deadlocks
+         List<Entity> oldPassengers = this.getPassengers();
+         List<Entity> newPassengers = new ArrayList<>(oldPassengers.size());
+         this.ejectPassengers();
+@@ -4297,36 +4297,39 @@ public abstract class Entity
+             }
+         }
+ 
+-        ProfilerFiller profiler = Profiler.get();
+-        profiler.push("teleportCrossDimension");
+-        Entity newEntity = this.getType().create(newLevel, EntitySpawnReason.DIMENSION_TRAVEL);
+-        if (newEntity == null) {
+-            profiler.pop();
+-            return null;
+-        }
+-
+         // Paper start - Fix item duplication and teleport issues
+         if (this instanceof Leashable leashable) {
+             leashable.dropLeash(); // Paper drop lead
+         }
+         // Paper end - Fix item duplication and teleport issues
+-        newEntity.restoreFrom(this);
+         this.removeAfterChangingDimensions();
+-        newEntity.teleportSetPosition(PositionMoveRotation.of(this), PositionMoveRotation.of(transition), transition.relatives());
+-        if (this.inWorld) newLevel.addDuringTeleport(newEntity); // CraftBukkit - Don't spawn the new entity if the current entity isn't spawned
++        this.teleportSpectators(transition, oldLevel);
+ 
+-        for (Entity newPassenger : newPassengers) {
+-            newPassenger.startRiding(newEntity, true, false);
+-        }
++        java.util.function.Supplier<Entity> spawnInNewWorldTask = () -> {
++            ProfilerFiller profiler = Profiler.get();
++            profiler.push("teleportCrossDimension");
++            try {
++                Entity newEntity = this.getType().create(newLevel, EntitySpawnReason.DIMENSION_TRAVEL);
++                if (newEntity == null) {
++                    return null;
++                }
+ 
+-        newLevel.resetEmptyTime();
+-        transition.postTeleportTransition().onTransition(newEntity);
+-        this.teleportSpectators(transition, oldLevel);
+-        profiler.pop();
+-        return newEntity;
+-        // Minogami start - thread safe teleport
++                newEntity.restoreFrom(this);
++                newEntity.teleportSetPosition(PositionMoveRotation.of(this), PositionMoveRotation.of(transition), transition.relatives());
++                if (this.inWorld) newLevel.addDuringTeleport(newEntity); // CraftBukkit - Don't spawn the new entity if the current entity isn't spawned
++
++                for (Entity newPassenger : newPassengers) {
++                    newPassenger.startRiding(newEntity, true, false);
++                }
++
++                newLevel.resetEmptyTime();
++                transition.postTeleportTransition().onTransition(newEntity);
++                return newEntity;
++            } finally {
++                profiler.pop();
++            }
+         };
+-        return this.level().worldThread.runWorldTaskThreadSafely(newLevel.worldThread, new world.minogami.thread.WorldTask<>(teleportTask), "NMS Entity teleport");
++        return this.level().worldThread.runWorldTaskThreadSafely(newLevel.worldThread, new world.minogami.thread.WorldTask<>(spawnInNewWorldTask), "NMS Entity teleport");
+         // Minogami end
+     }
+ 
+diff --git a/world/minogami/thread/ImplConcurrentTaskHandler.java b/world/minogami/thread/ImplConcurrentTaskHandler.java
+index bd48cd6ae84ba3b7ebd90a3ff859d17a61a7b885..2f35fc7367d89ac047cdfca0b54f9941379641d9 100644
+--- a/world/minogami/thread/ImplConcurrentTaskHandler.java
++++ b/world/minogami/thread/ImplConcurrentTaskHandler.java
+@@ -36,6 +36,11 @@ public class ImplConcurrentTaskHandler extends ConcurrentTaskHandler {
+         
+         // Async thread - always dispatch to world thread to ensure TickThread context (prevents Moonrise chunk/block-entity errors)
+         if (currentWorldThread == null) {
++            // If server is stopping or stopped, world threads are no longer ticking. Execute directly to allow shutdown data saving without hanging.
++            if (org.bukkit.Bukkit.isStopping() || net.minecraft.server.MinecraftServer.getServer() == null || net.minecraft.server.MinecraftServer.getServer().isStopped() || !net.minecraft.server.MinecraftServer.getServer().isRunning()) {
++                return supplier.get();
++            }
++
+             WorldTask<T> worldTask = new WorldTask<>(supplier);
+             targetWorldThread.addWorldTask(worldTask);
+             
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index 86b66cb384d13068c181918d6f6783295ab71930..73e17f16f1d4d5345d8a2425c88392c24c2de238 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
+@@ -40,7 +40,7 @@ public class WorldThreadPool {
+     public static void init() {
+         int poolSize = MinogamiConfig.getMaxWorldThreads();
+         if (poolSize <= 0) {
+-            poolSize = 4;
++            poolSize = Math.max(Runtime.getRuntime().availableProcessors(), 8);
+         }
+ 
+         AtomicInteger threadCount = new AtomicInteger(0);
