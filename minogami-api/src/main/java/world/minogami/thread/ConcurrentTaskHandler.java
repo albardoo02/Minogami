@@ -23,6 +23,9 @@ public abstract class ConcurrentTaskHandler {
      * @return Result of supplier.
      */
     public static <T> T runConcurrentTaskForWorld(World targetWorld, Supplier<T> task) {
+        if (INSTANCE == null) {
+            return task != null ? task.get() : null;
+        }
         return INSTANCE.runConcurrentTaskForWorldImpl(targetWorld, task);
     }
     
@@ -38,6 +41,11 @@ public abstract class ConcurrentTaskHandler {
      * @param runnable Runnable task.
      */
     public static void runConcurrentTaskForWorld(World targetWorld, Runnable runnable) {
+        if (runnable == null) return;
+        if (INSTANCE == null) {
+            runnable.run();
+            return;
+        }
         INSTANCE.runConcurrentTaskForWorldImpl(targetWorld, () -> {
             runnable.run();
             return null;

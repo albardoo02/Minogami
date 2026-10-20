@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 17:28:17 +0900
+Subject: [PATCH] fix(concurrency): bound waitFor cycle detection, drain tasks
+ on shutdown, resolve thread provider, and ensure memory visibility
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 28cd395a823ce477dc86788435e345f888e0d5df..18e0d65fc7b7b2dcda0a78838d6254ae5b9040c4 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -4329,7 +4329,7 @@ public abstract class Entity
+                 profiler.pop();
+             }
+         };
+-        return this.level().worldThread.runWorldTaskThreadSafely(newLevel.worldThread, new world.minogami.thread.WorldTask<>(spawnInNewWorldTask), "NMS Entity teleport");
++        return oldLevel.worldThread.runWorldTaskThreadSafely(newLevel.worldThread, new world.minogami.thread.WorldTask<>(spawnInNewWorldTask), "NMS Entity teleport");
+         // Minogami end
+     }
+ 
+diff --git a/world/minogami/bridge/ParallelEntityMoveHandler.java b/world/minogami/bridge/ParallelEntityMoveHandler.java
+index e6e914b96b2edecadd67ca1a2b73752cba290513..3ae0f8509bd44648553c52a1854dbbd015983d29 100644
+--- a/world/minogami/bridge/ParallelEntityMoveHandler.java
++++ b/world/minogami/bridge/ParallelEntityMoveHandler.java
+@@ -13,8 +13,8 @@ public class ParallelEntityMoveHandler {
+     
+     private final Player player;
+     
+-    public Function<Map.Entry<BoundingBox, Vector>, Boolean> tryToMoveFunction = null;
+-    public BiPredicate<BoundingBox, Vector> tryToMovePredicate = null;
++    public volatile Function<Map.Entry<BoundingBox, Vector>, Boolean> tryToMoveFunction = null;
++    public volatile BiPredicate<BoundingBox, Vector> tryToMovePredicate = null;
+     
+     public ParallelEntityMoveHandler(Player player){this.player = player;}
+     
+diff --git a/world/minogami/thread/MinogamiServerThreadProvider.java b/world/minogami/thread/MinogamiServerThreadProvider.java
+index c266da71bfbda7adcb5c637bfe65607669ec83fe..eef20f62eca7b45588166212991fdc232fddb939 100644
+--- a/world/minogami/thread/MinogamiServerThreadProvider.java
++++ b/world/minogami/thread/MinogamiServerThreadProvider.java
+@@ -22,7 +22,8 @@ public class MinogamiServerThreadProvider {
+                     if (world == null) return null;
+                     var craftWorld = (CraftWorld) world;
+                     var handle = craftWorld.getHandle();
+-                    return handle != null ? handle.thread : null;
++                    if (handle == null) return null;
++                    return handle.thread != null ? handle.thread : (handle.worldThread != null ? handle.worldThread.getCurrentThread() : null);
+                 }
+             });
+         } catch (Exception e) {
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index 83dbc99b114b9ca50e8ace1a72e687b457175e1d..78110dbe4433d117e4e92e791e29d561c1b7d066 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -133,9 +133,10 @@ public class WorldThread implements Runnable {
+ 
+                 //Checks to see if threads waiting to exit are not recursively waiting for themselves.
+                 WorldThread waitForThread = targetWorldThread;
+-                do {
++                int maxHops = 32;
++                while (waitForThread != null && waitForThread != this && --maxHops > 0) {
+                     waitForThread = waitForThread.waitFor;
+-                } while (waitForThread != null && waitForThread != this);
++                }
+ 
+                 if (waitForThread == null) {
+                     if (targetWorldThread.isProcessingWorldTick) {
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index 4401e0e3d6831e92576badb6c69eb57dbf28ead4..8fa5a154fc7fb2c6087bbc79412929f147e20ff0 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
+@@ -1,6 +1,7 @@
+ package world.minogami.thread;
+ 
+ import ca.spottedleaf.moonrise.common.util.TickThread;
++import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.ServerLevel;
+ import world.minogami.config.MinogamiConfig;
+ 
+@@ -70,6 +71,14 @@ public class WorldThreadPool {
+     }
+     
+     public static void shutdown() {
++        MinecraftServer server = MinecraftServer.getServer();
++        if (server != null) {
++            for (ServerLevel level : server.getAllLevels()) {
++                if (level.worldThread != null) {
++                    level.worldThread.executeWorldTasks();
++                }
++            }
++        }
+         if (executorService != null) {
+             executorService.shutdown();
+             try {

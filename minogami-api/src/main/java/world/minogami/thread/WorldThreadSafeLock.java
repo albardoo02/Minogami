@@ -15,19 +15,31 @@ public class WorldThreadSafeLock extends ReentrantLock {
     @Override
     public void lock() {
         super.lock();
-        WorldThreadLockHandler.INSTANCE.lock(this);
+        if (WorldThreadLockHandler.INSTANCE != null) {
+            WorldThreadLockHandler.INSTANCE.lock(this);
+        }
+    }
+
+    @Override
+    public void lockInterruptibly() throws InterruptedException {
+        super.lockInterruptibly();
+        if (WorldThreadLockHandler.INSTANCE != null) {
+            WorldThreadLockHandler.INSTANCE.lock(this);
+        }
     }
     
     @Override
     public void unlock() {
-        WorldThreadLockHandler.INSTANCE.unlock(this);
+        if (WorldThreadLockHandler.INSTANCE != null) {
+            WorldThreadLockHandler.INSTANCE.unlock(this);
+        }
         super.unlock();
     }
     
     @Override
     public boolean tryLock() {
         boolean already = super.tryLock();
-        if (already) {
+        if (already && WorldThreadLockHandler.INSTANCE != null) {
             WorldThreadLockHandler.INSTANCE.lock(this);
         }
         return already;
@@ -36,7 +48,7 @@ public class WorldThreadSafeLock extends ReentrantLock {
     @Override
     public boolean tryLock(long timeout, TimeUnit unit) throws InterruptedException {
         boolean already = super.tryLock(timeout, unit);
-        if (already) {
+        if (already && WorldThreadLockHandler.INSTANCE != null) {
             WorldThreadLockHandler.INSTANCE.lock(this);
         }
         return already;
