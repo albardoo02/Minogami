@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 18:26:20 +0900
+Subject: [PATCH] feat(config): expose particle anti-surge and pathfinding
+ throttle settings in minogami.yml
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 33703729946f0047cd0d331ca8ea824fb809f54e..f63bd04a6e9b1751ff712d685629baf8004a4a38 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -2479,9 +2479,10 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             return false;
+         } else {
+             BlockPos pos = player.blockPosition();
+-            double maxDist = overrideLimiter ? 64.0 : 32.0; // Minogami - clamp extreme 512m particle broadcast to 64m to protect lobbies
++            double maxDist = overrideLimiter ? world.minogami.config.MinogamiConfig.getMaxParticleDistance() : 32.0; // Minogami - configurable particle distance
+             if (pos.closerToCenterThan(new Vec3(x, y, z), maxDist)) {
+-                if (player.particlePacketCountThisTick++ > 300) {
++                int maxPackets = world.minogami.config.MinogamiConfig.getMaxParticlePacketsPerTick();
++                if (maxPackets > 0 && player.particlePacketCountThisTick++ > maxPackets) {
+                     return false; // Minogami - anti-surge protection: prevent network buffer overflow / watchdog crash
+                 }
+                 player.connection.send(packet);
+diff --git a/net/minecraft/world/entity/ai/navigation/PathNavigation.java b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+index b426e2a46a3216d75532bdaec75935ad42d55001..f71f5fcfb90954d6bbe2fde6f8544d09ad32e680 100644
+--- a/net/minecraft/world/entity/ai/navigation/PathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+@@ -224,8 +224,10 @@ public abstract class PathNavigation {
+ 
+     public boolean moveTo(final Entity target, final int reachRange, final double speedModifier) {
+         // Minogami start - pathfinding throttling: avoid recomputing A* every tick if target has barely moved and current path is still valid
+-        if (this.path != null && !this.path.isDone() && this.targetPos != null) {
+-            if (this.targetPos.closerToCenterThan(target.position(), 2.0) && (net.minecraft.server.MinecraftServer.currentTick - this.lastPathfindSuccessTick < 6)) {
++        int throttleTicks = world.minogami.config.MinogamiConfig.getPathfindingThrottleTicks();
++        if (throttleTicks > 0 && this.path != null && !this.path.isDone() && this.targetPos != null) {
++            double throttleDist = world.minogami.config.MinogamiConfig.getPathfindingThrottleDistance();
++            if (this.targetPos.closerToCenterThan(target.position(), throttleDist) && (net.minecraft.server.MinecraftServer.currentTick - this.lastPathfindSuccessTick < throttleTicks)) {
+                 this.setSpeedModifier(speedModifier);
+                 return true;
+             }
+diff --git a/net/minecraft/world/level/ServerExplosion.java b/net/minecraft/world/level/ServerExplosion.java
+index 1d24ef7c968e2510715be35b13649a7f113faae2..f2db8560643e5e3780b0a9b95f9ccca3b465a333 100644
+--- a/net/minecraft/world/level/ServerExplosion.java
++++ b/net/minecraft/world/level/ServerExplosion.java
+@@ -733,7 +733,7 @@ public class ServerExplosion implements Explosion {
+ 
+     // Paper start - Optimize explosions
+     private float getBlockDensity(Vec3 center, Entity entity) {
+-        if (entity instanceof net.minecraft.world.entity.item.PrimedTnt) {
++        if (world.minogami.config.MinogamiConfig.isTntFastExposure() && entity instanceof net.minecraft.world.entity.item.PrimedTnt) {
+             return 1.0F; // Minogami - fast-path PrimedTnt: skip 16-point raycasting for other primed TNT entities
+         }
+         if (!this.level.paperConfig().environment.optimizeExplosions) {
+diff --git a/world/minogami/config/MinogamiConfig.java b/world/minogami/config/MinogamiConfig.java
+index 9b6d306c63fef8e0373204777caa22330292eaf3..6a408e6e5479390e30e598ad2c91ab7fc90a4cf5 100644
+--- a/world/minogami/config/MinogamiConfig.java
++++ b/world/minogami/config/MinogamiConfig.java
+@@ -10,7 +10,7 @@ import java.util.ArrayList;
+ import java.util.List;
+ 
+ public final class MinogamiConfig {
+-    private static final int VERSION = 2;
++    private static final int VERSION = 3;
+     
+     private static final List<ConfigComponent<?>> configComponentList = new ArrayList<>();
+     
+@@ -18,6 +18,12 @@ public final class MinogamiConfig {
+     private static final ConfigComponent<Integer> MAX_WORLD_THREADS = new ConfigComponent<>("max-world-threads", 0, 0);
+     private static final ConfigComponent<Boolean> SHOW_MINOGAMI_LOG = new ConfigComponent<>("show-detail-log", true, 0);
+     private static final ConfigComponent<Boolean> SYNCHRONIZED_EVENT = new ConfigComponent<>("synchronized-event", true, 1);
++
++    private static final ConfigComponent<Integer> MAX_PARTICLE_PACKETS_PER_TICK = new ConfigComponent<>("anti-surge.max-particle-packets-per-player-per-tick", 300, 3);
++    private static final ConfigComponent<Double> MAX_PARTICLE_DISTANCE = new ConfigComponent<>("anti-surge.max-particle-distance", 64.0, 3);
++    private static final ConfigComponent<Integer> PATHFINDING_THROTTLE_TICKS = new ConfigComponent<>("performance.pathfinding-throttle-ticks", 6, 3);
++    private static final ConfigComponent<Double> PATHFINDING_THROTTLE_DISTANCE = new ConfigComponent<>("performance.pathfinding-throttle-distance", 2.0, 3);
++    private static final ConfigComponent<Boolean> TNT_FAST_EXPOSURE = new ConfigComponent<>("performance.tnt-fast-exposure", true, 3);
+     
+     private static void setDefaultValues(YamlConfiguration yml){
+         int configVer = 0;
+@@ -73,7 +79,20 @@ public final class MinogamiConfig {
+             configComponentList.add(this);
+         }
+         
+-        private void setValue(Object value) {this.value = (T)value;}
++        @SuppressWarnings("unchecked")
++        private void setValue(Object value) {
++            if (value instanceof Number number) {
++                if (defaultValue instanceof Double) {
++                    this.value = (T) Double.valueOf(number.doubleValue());
++                    return;
++                }
++                if (defaultValue instanceof Integer) {
++                    this.value = (T) Integer.valueOf(number.intValue());
++                    return;
++                }
++            }
++            this.value = (T)value;
++        }
+         
+         private T getValue() {
+             if(value != null) return value;
+@@ -108,4 +127,14 @@ public final class MinogamiConfig {
+     public static boolean isShowLogs() {return SHOW_MINOGAMI_LOG.getValue();}
+     
+     public static boolean isSynchronizedEvent(){return SYNCHRONIZED_EVENT.getValue();}
++
++    public static int getMaxParticlePacketsPerTick() {return MAX_PARTICLE_PACKETS_PER_TICK.getValue();}
++
++    public static double getMaxParticleDistance() {return MAX_PARTICLE_DISTANCE.getValue();}
++
++    public static int getPathfindingThrottleTicks() {return PATHFINDING_THROTTLE_TICKS.getValue();}
++
++    public static double getPathfindingThrottleDistance() {return PATHFINDING_THROTTLE_DISTANCE.getValue();}
++
++    public static boolean isTntFastExposure() {return TNT_FAST_EXPOSURE.getValue();}
+ }
