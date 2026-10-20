@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:18:18 +0900
+Subject: [PATCH] Normalize SafeguardLogger rate limit keys and prevent memory
+ growth
+
+
+diff --git a/world/minogami/log/SafeguardLogger.java b/world/minogami/log/SafeguardLogger.java
+index 6fc3c4db0dd170d9952107a02e568e9c9cc391e4..a7c0dfbb449c33e8bd248de1980bd0e77a693f9d 100644
+--- a/world/minogami/log/SafeguardLogger.java
++++ b/world/minogami/log/SafeguardLogger.java
+@@ -8,16 +8,34 @@ import org.bukkit.Bukkit;
+ public final class SafeguardLogger {
+     private static final ConcurrentHashMap<String, RateLimitEntry> rateLimitMap = new ConcurrentHashMap<>();
+     private static final long RATE_LIMIT_WINDOW_MS = 5000L;
++    private static final int MAX_ENTRIES = 256;
+ 
+     private static class RateLimitEntry {
+         long lastLoggedTime = 0;
+         final AtomicInteger suppressedCount = new AtomicInteger(0);
+     }
+ 
++    private static String getCategory(String context) {
++        if (context == null) return "unknown";
++        int idx = context.indexOf(" at ");
++        if (idx != -1) return context.substring(0, idx);
++        idx = context.indexOf(" (");
++        if (idx != -1) return context.substring(0, idx);
++        idx = context.indexOf('[');
++        if (idx != -1) return context.substring(0, idx);
++        return context;
++    }
++
+     public static void logSafeguardException(String context, Throwable t) {
+         if (t == null) return;
+-        String key = context + ":" + t.getClass().getName() + ":" + (t.getMessage() != null ? t.getMessage() : "");
++        String category = getCategory(context);
++        String key = category + ":" + t.getClass().getName();
+         long now = System.currentTimeMillis();
++
++        if (rateLimitMap.size() > MAX_ENTRIES) {
++            rateLimitMap.entrySet().removeIf(e -> (now - e.getValue().lastLoggedTime) > RATE_LIMIT_WINDOW_MS * 2);
++        }
++
+         RateLimitEntry entry = rateLimitMap.computeIfAbsent(key, k -> new RateLimitEntry());
+ 
+         synchronized (entry) {
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index 8071abc73d15ef6e97102e4635486b7d5cfb26b0..44c56a8282153f06f888371ea17934391e4a1ca6 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -68,7 +68,7 @@ public class WorldThread implements Runnable {
+         try {
+             worldTickRunnable.run();
+         } catch (Throwable t) {
+-            world.minogami.log.SafeguardLogger.logSafeguardException("WorldTickThread[" + tick + "]", t);
++            world.minogami.log.SafeguardLogger.logSafeguardException("WorldTickThread[" + (level.getWorld() != null ? level.getWorld().getName() : "world") + "]", t);
+         }
+         
+         executeWorldTasks();
