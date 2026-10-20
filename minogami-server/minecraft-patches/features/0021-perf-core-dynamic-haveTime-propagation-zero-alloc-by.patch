@@ -1,0 +1,176 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 17:19:45 +0900
+Subject: [PATCH] perf(core): dynamic haveTime propagation, zero-alloc bypass
+ caches, fast-path tasks, and player disconnect cleanup
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 028943e628658f05fb12005e81cdb26dcdf0f35b..2cfad701448706b1a0ef30c01a4b45b6b0343cb7 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1800,12 +1800,13 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         for (ServerLevel level : this.getAllLevels()) {
+             // Minogami start - world threading
+             world.minogami.thread.WorldThread worldThread = level.worldThread;
++            worldThread.setHaveTime(haveTime); // Minogami - update dynamic haveTime for this tick
+             if (worldThread.getWorldTickRunnable() == null) {
+             worldThread.setWorldTickRunnable(() -> {
+             level.thread = Thread.currentThread();
+             // Minogami end
+             // Minogami start - add ChiyogamiLib
+-            world.chiyogami.chiyogamilib.scheduler.WorldThreadRunnable.worldThreadHeartBeat(level.getWorld(), currentTick);
++            world.chiyogami.chiyogamilib.scheduler.WorldThreadRunnable.worldThreadHeartBeat(level.getWorld(), MinecraftServer.currentTick);
+             long worldServerStartTimeNano = System.nanoTime();
+             // Minogami end
+             level.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
+@@ -1816,7 +1817,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             profiler.push("tick");
+ 
+             try {
+-                level.tick(haveTime);
++                level.tick(worldThread.getHaveTime());
+             } catch (Throwable t) {
+                 CrashReport report = CrashReport.forThrowable(t, "Exception ticking world");
+                 level.fillReportDetails(report);
+diff --git a/net/minecraft/server/players/PlayerList.java b/net/minecraft/server/players/PlayerList.java
+index 62f57eb254321902692550d0a86c24292ef9e87d..ae8c3c5eb42262340a01e2927c8c0a3b83597e54 100644
+--- a/net/minecraft/server/players/PlayerList.java
++++ b/net/minecraft/server/players/PlayerList.java
+@@ -501,6 +501,7 @@ public abstract class PlayerList {
+         player.retireScheduler(); // Paper - Folia schedulers
+         player.getAdvancements().clearTriggers();
+         this.players.remove(player);
++        world.minogami.bridge.ParallelBridge.removeParallelEntityMoveHandler(player.getBukkitEntity()); // Minogami - clean up move handler on disconnect
+         this.playersByName.remove(player.getScoreboardName().toLowerCase(java.util.Locale.ROOT)); // Spigot
+         this.server.getCustomBossEvents().onPlayerDisconnect(player);
+         UUID uuid = player.getUUID();
+diff --git a/world/minogami/config/EventLockBypass.java b/world/minogami/config/EventLockBypass.java
+index 8538297764dfae603f66714311547ea0949b3d72..dedc1a91178c2500bf9f07beeee8716d77601337 100644
+--- a/world/minogami/config/EventLockBypass.java
++++ b/world/minogami/config/EventLockBypass.java
+@@ -25,30 +25,40 @@ public final class EventLockBypass {
+         if (eventClass == null || bypassedEventClasses.isEmpty()) {
+             return false;
+         }
+-        return eventClassCache.computeIfAbsent(eventClass, clazz -> {
+-            Class<?> current = clazz;
+-            while (current != null && current != Object.class) {
+-                if (bypassedEventClasses.contains(current.getName())) {
+-                    return true;
+-                }
+-                current = current.getSuperclass();
++        Boolean cached = eventClassCache.get(eventClass);
++        if (cached != null) {
++            return cached;
++        }
++        boolean bypassed = false;
++        Class<?> current = eventClass;
++        while (current != null && current != Object.class) {
++            if (bypassedEventClasses.contains(current.getName())) {
++                bypassed = true;
++                break;
+             }
+-            return false;
+-        });
++            current = current.getSuperclass();
++        }
++        eventClassCache.put(eventClass, bypassed);
++        return bypassed;
+     }
+ 
+     public static boolean isPluginBypassed(String pluginName) {
+         if (pluginName == null || bypassedPluginPrefixes.isEmpty()) {
+             return false;
+         }
+-        return pluginNameCache.computeIfAbsent(pluginName, name -> {
+-            for (String prefix : bypassedPluginPrefixes) {
+-                int prefixLen = prefix.length();
+-                if (prefixLen <= name.length() && name.regionMatches(true, 0, prefix, 0, prefixLen)) {
+-                    return true;
+-                }
++        Boolean cached = pluginNameCache.get(pluginName);
++        if (cached != null) {
++            return cached;
++        }
++        boolean bypassed = false;
++        for (String prefix : bypassedPluginPrefixes) {
++            int prefixLen = prefix.length();
++            if (prefixLen <= pluginName.length() && pluginName.regionMatches(true, 0, prefix, 0, prefixLen)) {
++                bypassed = true;
++                break;
+             }
+-            return false;
+-        });
++        }
++        pluginNameCache.put(pluginName, bypassed);
++        return bypassed;
+     }
+ }
+diff --git a/world/minogami/log/SafeguardLogger.java b/world/minogami/log/SafeguardLogger.java
+index a7c0dfbb449c33e8bd248de1980bd0e77a693f9d..c869c58d44d0ec6c4b40b809cd8ae301b066ea38 100644
+--- a/world/minogami/log/SafeguardLogger.java
++++ b/world/minogami/log/SafeguardLogger.java
+@@ -36,7 +36,10 @@ public final class SafeguardLogger {
+             rateLimitMap.entrySet().removeIf(e -> (now - e.getValue().lastLoggedTime) > RATE_LIMIT_WINDOW_MS * 2);
+         }
+ 
+-        RateLimitEntry entry = rateLimitMap.computeIfAbsent(key, k -> new RateLimitEntry());
++        RateLimitEntry entry = rateLimitMap.get(key);
++        if (entry == null) {
++            entry = rateLimitMap.computeIfAbsent(key, k -> new RateLimitEntry());
++        }
+ 
+         synchronized (entry) {
+             if (now - entry.lastLoggedTime >= RATE_LIMIT_WINDOW_MS) {
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index c34e3502d93907a4ebc3a19710cc1af26e4aa0e2..83dbc99b114b9ca50e8ace1a72e687b457175e1d 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -40,6 +40,16 @@ public class WorldThread implements Runnable {
+     public Runnable getWorldTickRunnable() {return worldTickRunnable;}
+     
+     public void setWorldTickRunnable(Runnable worldTickRunnable) {this.worldTickRunnable = worldTickRunnable;}
++
++    private volatile java.util.function.BooleanSupplier currentHaveTime = () -> true;
++
++    public void setHaveTime(java.util.function.BooleanSupplier haveTime) {
++        this.currentHaveTime = haveTime != null ? haveTime : () -> true;
++    }
++
++    public java.util.function.BooleanSupplier getHaveTime() {
++        return currentHaveTime;
++    }
+     
+     public boolean isProcessingWorldTick() {return isProcessingWorldTick;}
+     
+@@ -175,6 +185,7 @@ public class WorldThread implements Runnable {
+     }
+ 
+     public void executeWorldTasks() {
++        if (worldTasks.isEmpty()) return;
+         WorldTask<?> task;
+         while ((task = worldTasks.poll()) != null) {
+             try {
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index 73e17f16f1d4d5345d8a2425c88392c24c2de238..4401e0e3d6831e92576badb6c69eb57dbf28ead4 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
+@@ -60,13 +60,13 @@ public class WorldThreadPool {
+     }
+     
+     public static boolean isWorldThread() {
+-        return CURRENT_WORLD_THREAD.get() != null || worldThreadHashMap.containsKey(Thread.currentThread());
++        return CURRENT_WORLD_THREAD.get() != null;
+     }
+     
+     public static WorldThread getWorldThreadFromCurrentThread() {
+-        WorldThread wt = CURRENT_WORLD_THREAD.get();
+-        if (wt != null) return wt;
+-        return worldThreadHashMap.get(Thread.currentThread());
++        return CURRENT_WORLD_THREAD.get();
++
++
+     }
+     
+     public static void shutdown() {
