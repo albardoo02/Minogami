@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Tue, 20 Oct 2026 15:09:40 +0900
+Subject: [PATCH] Optimize EventLockBypass and implement configuration loading
+
+
+diff --git a/world/minogami/config/EventLockBypass.java b/world/minogami/config/EventLockBypass.java
+index 73c3b398b2dc3916b32db7c58c6e8059e09503d1..8538297764dfae603f66714311547ea0949b3d72 100644
+--- a/world/minogami/config/EventLockBypass.java
++++ b/world/minogami/config/EventLockBypass.java
+@@ -11,8 +11,12 @@ public final class EventLockBypass {
+     private static final Map<String, Boolean> pluginNameCache = new ConcurrentHashMap<>();
+ 
+     public static void setConfig(List<String> eventClasses, List<String> pluginPrefixes) {
+-        bypassedEventClasses = new HashSet<>(eventClasses != null ? eventClasses : Collections.emptyList());
+-        bypassedPluginPrefixes = new ArrayList<>(pluginPrefixes != null ? pluginPrefixes : Collections.emptyList());
++        bypassedEventClasses = (eventClasses != null && !eventClasses.isEmpty())
++                ? Collections.unmodifiableSet(new HashSet<>(eventClasses))
++                : Collections.emptySet();
++        bypassedPluginPrefixes = (pluginPrefixes != null && !pluginPrefixes.isEmpty())
++                ? List.copyOf(pluginPrefixes)
++                : Collections.emptyList();
+         eventClassCache.clear();
+         pluginNameCache.clear();
+     }
+@@ -39,7 +43,8 @@ public final class EventLockBypass {
+         }
+         return pluginNameCache.computeIfAbsent(pluginName, name -> {
+             for (String prefix : bypassedPluginPrefixes) {
+-                if (name.equalsIgnoreCase(prefix) || name.startsWith(prefix)) {
++                int prefixLen = prefix.length();
++                if (prefixLen <= name.length() && name.regionMatches(true, 0, prefix, 0, prefixLen)) {
+                     return true;
+                 }
+             }
+diff --git a/world/minogami/config/MinogamiConfig.java b/world/minogami/config/MinogamiConfig.java
+index a80163c21f7d90f68d1358b35f284538199b0a7b..9b6d306c63fef8e0373204777caa22330292eaf3 100644
+--- a/world/minogami/config/MinogamiConfig.java
++++ b/world/minogami/config/MinogamiConfig.java
+@@ -1,6 +1,5 @@
+ package world.minogami.config;
+ 
+-
+ import io.papermc.paper.plugin.manager.PaperEventManager;
+ import org.bukkit.configuration.file.YamlConfiguration;
+ import world.minogami.log.MinogamiLogger;
+@@ -11,9 +10,6 @@ import java.util.ArrayList;
+ import java.util.List;
+ 
+ public final class MinogamiConfig {
+-    private static List<String> bypassEvents = new ArrayList<>();
+-    private static List<String> bypassPlugins = new ArrayList<>();
+-    
+     private static final int VERSION = 2;
+     
+     private static final List<ConfigComponent<?>> configComponentList = new ArrayList<>();
+@@ -23,7 +19,6 @@ public final class MinogamiConfig {
+     private static final ConfigComponent<Boolean> SHOW_MINOGAMI_LOG = new ConfigComponent<>("show-detail-log", true, 0);
+     private static final ConfigComponent<Boolean> SYNCHRONIZED_EVENT = new ConfigComponent<>("synchronized-event", true, 1);
+     
+-    
+     private static void setDefaultValues(YamlConfiguration yml){
+         int configVer = 0;
+         if(yml.contains(CONFIG_VERSION.path)) configVer = yml.getInt(CONFIG_VERSION.path);
+@@ -37,9 +32,15 @@ public final class MinogamiConfig {
+                 yml.set(path, defaultValue);
+             }
+         }
++
++        if (!yml.contains("thread-safety.event-lock-bypass.events")) {
++            yml.set("thread-safety.event-lock-bypass.events", List.of("org.bukkit.event.player.PlayerMoveEvent"));
++        }
++        if (!yml.contains("thread-safety.event-lock-bypass.plugins")) {
++            yml.set("thread-safety.event-lock-bypass.plugins", List.of("CrackShot", "CrackShotPlus", "CoreProtect", "Azi", "Life"));
++        }
+     }
+     
+-    
+     private static void loadValues(YamlConfiguration yml){
+         for(ConfigComponent<?> configComponent : configComponentList){
+             String path = configComponent.path;
+@@ -49,9 +50,12 @@ public final class MinogamiConfig {
+                 }catch (Exception e){e.printStackTrace();}
+             }
+         }
++
++        List<String> bypassEvents = yml.getStringList("thread-safety.event-lock-bypass.events");
++        List<String> bypassPlugins = yml.getStringList("thread-safety.event-lock-bypass.plugins");
++        EventLockBypass.setConfig(bypassEvents, bypassPlugins);
+     }
+     
+-    
+     private static class ConfigComponent<T>{
+         
+         private final String path;
+@@ -77,12 +81,8 @@ public final class MinogamiConfig {
+         }
+     }
+     
+-    
+-    
+-    
+     public static void load(){
+         try {
+-            
+             File file = new File("minogami.yml");
+             
+             YamlConfiguration yml;
+@@ -96,15 +96,10 @@ public final class MinogamiConfig {
+             
+             loadValues(yml);
+             
+-            //WorkMode.MULTI_THREAD_TICK = MAX_WORLD_THREADS.getValue() != 1;
+             WorldThreadPool.setMaxPoolSize(MAX_WORLD_THREADS.getValue());
+-            
+             MinogamiLogger.isShowLogs = SHOW_MINOGAMI_LOG.getValue();
+-            
+             PaperEventManager.synchronizedEvent = SYNCHRONIZED_EVENT.getValue();
+             
+-            //ParallelWorldBridge.parallelWorldBridge = PARALLEL_WORLD_BRIDGE.getValue();
+-            
+         }catch (Exception e){e.printStackTrace();}
+     }
+     
+@@ -114,4 +109,3 @@ public final class MinogamiConfig {
+     
+     public static boolean isSynchronizedEvent(){return SYNCHRONIZED_EVENT.getValue();}
+ }
+-
