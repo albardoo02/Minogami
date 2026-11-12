@@ -1,0 +1,242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: albardoo02 <akshs@outlook.jp>
+Date: Thu, 12 Nov 2026 02:36:35 +0000
+Subject: [PATCH] feat(api): add world tick hook and handoff API
+
+Expose WorldTickScheduler so plugins can run code on the thread that ticks
+a given world: per-tick PRE/POST hooks and a non-blocking handoff that runs
+a task at the start of the target world's next tick.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01WvVxmMCcCQajvctZ8727nY
+
+diff --git a/world/minogami/thread/ImplWorldTickScheduler.java b/world/minogami/thread/ImplWorldTickScheduler.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd8460b9ec43
+--- /dev/null
++++ b/world/minogami/thread/ImplWorldTickScheduler.java
+@@ -0,0 +1,180 @@
++package world.minogami.thread;
++
++import net.minecraft.server.MinecraftServer;
++import org.bukkit.Bukkit;
++import org.bukkit.World;
++import org.bukkit.craftbukkit.CraftWorld;
++import org.bukkit.plugin.Plugin;
++import world.minogami.log.SafeguardLogger;
++
++import java.util.List;
++import java.util.Objects;
++import java.util.concurrent.CompletableFuture;
++import java.util.function.Supplier;
++
++/**
++ * Server-side implementation of {@link WorldTickScheduler}.
++ * <p>
++ * Loaded lazily by {@link WorldTickScheduler} through reflection, so no bootstrap code
++ * in {@code net.minecraft} is required.
++ */
++public final class ImplWorldTickScheduler extends WorldTickScheduler {
++
++    public ImplWorldTickScheduler() {super();}
++
++    // ------------------------------------------------------------------
++    // Entries
++    // ------------------------------------------------------------------
++
++    static final class HookEntry implements WorldTickHook {
++        private final Plugin plugin;
++        private final World world;
++        private final TickPhase phase;
++        private final Runnable task;
++        private final WorldThread owner;
++        private volatile boolean cancelled = false;
++
++        HookEntry(Plugin plugin, World world, TickPhase phase, Runnable task, WorldThread owner) {
++            this.plugin = plugin;
++            this.world = world;
++            this.phase = phase;
++            this.task = task;
++            this.owner = owner;
++        }
++
++        @Override public Plugin getPlugin() {return plugin;}
++        @Override public World getWorld() {return world;}
++        @Override public TickPhase getPhase() {return phase;}
++        @Override public boolean isCancelled() {return cancelled;}
++
++        @Override
++        public void cancel() {
++            if (cancelled) return;
++            cancelled = true;
++            (phase == TickPhase.PRE ? owner.preTickHooks : owner.postTickHooks).remove(this);
++        }
++    }
++
++    static final class HandoffEntry {
++        private final Plugin plugin;
++        private final Supplier<?> supplier;
++        @SuppressWarnings("rawtypes")
++        private final CompletableFuture future;
++
++        HandoffEntry(Plugin plugin, Supplier<?> supplier, CompletableFuture<?> future) {
++            this.plugin = plugin;
++            this.supplier = supplier;
++            this.future = future;
++        }
++    }
++
++    // ------------------------------------------------------------------
++    // Called from WorldThread#run
++    // ------------------------------------------------------------------
++
++    static void runHooks(WorldThread worldThread, List<HookEntry> hooks) {
++        if (hooks.isEmpty()) return;
++        for (HookEntry hook : hooks) { // CopyOnWriteArrayList: safe against cancel() during iteration
++            if (hook.cancelled) continue;
++            if (!hook.plugin.isEnabled()) {
++                hook.cancel();
++                continue;
++            }
++            try {
++                hook.task.run();
++            } catch (Throwable t) {
++                SafeguardLogger.logSafeguardException("WorldTickHook[" + hook.plugin.getName() + "] at " + worldName(worldThread), t);
++            }
++        }
++    }
++
++    @SuppressWarnings("unchecked")
++    static void runHandoffs(WorldThread worldThread) {
++        if (worldThread.handoffQueue.isEmpty()) return;
++        // Only drain what was queued before this tick started; entries added while draining run next tick.
++        int count = worldThread.handoffQueue.size();
++        HandoffEntry entry;
++        while (count-- > 0 && (entry = worldThread.handoffQueue.poll()) != null) {
++            if (!entry.plugin.isEnabled()) {
++                entry.future.completeExceptionally(new IllegalStateException("Plugin " + entry.plugin.getName() + " is disabled"));
++                continue;
++            }
++            try {
++                entry.future.complete(entry.supplier.get());
++            } catch (Throwable t) {
++                entry.future.completeExceptionally(t);
++                SafeguardLogger.logSafeguardException("WorldHandoff[" + entry.plugin.getName() + "] at " + worldName(worldThread), t);
++            }
++        }
++    }
++
++    // ------------------------------------------------------------------
++    // API implementation
++    // ------------------------------------------------------------------
++
++    @Override
++    protected WorldTickHook registerTickHookImpl(Plugin plugin, World world, TickPhase phase, Runnable task) {
++        Objects.requireNonNull(plugin, "plugin");
++        Objects.requireNonNull(world, "world");
++        Objects.requireNonNull(phase, "phase");
++        Objects.requireNonNull(task, "task");
++        if (!plugin.isEnabled()) {
++            throw new IllegalStateException("Plugin " + plugin.getName() + " is disabled");
++        }
++        WorldThread worldThread = worldThreadOf(world);
++        HookEntry entry = new HookEntry(plugin, world, phase, task, worldThread);
++        (phase == TickPhase.PRE ? worldThread.preTickHooks : worldThread.postTickHooks).add(entry);
++        return entry;
++    }
++
++    @Override
++    protected <T> CompletableFuture<T> handoffImpl(Plugin plugin, World world, Supplier<T> task) {
++        Objects.requireNonNull(plugin, "plugin");
++        Objects.requireNonNull(world, "world");
++        Objects.requireNonNull(task, "task");
++        CompletableFuture<T> future = new CompletableFuture<>();
++        if (!plugin.isEnabled()) {
++            future.completeExceptionally(new IllegalStateException("Plugin " + plugin.getName() + " is disabled"));
++            return future;
++        }
++        if (Bukkit.getWorld(world.getUID()) == null) {
++            future.completeExceptionally(new IllegalStateException("World " + world.getName() + " is not loaded"));
++            return future;
++        }
++        MinecraftServer server = MinecraftServer.getServer();
++        if (server == null || !server.isRunning() || Bukkit.isStopping()) {
++            future.completeExceptionally(new IllegalStateException("Server is stopping"));
++            return future;
++        }
++        worldThreadOf(world).handoffQueue.offer(new HandoffEntry(plugin, task, future));
++        return future;
++    }
++
++    @Override
++    protected boolean isWorldThreadImpl(World world) {
++        if (world == null) return false;
++        var handle = ((CraftWorld) world).getHandle();
++        if (handle == null || handle.worldThread == null) return false;
++        return WorldThreadPool.getWorldThreadFromCurrentThread() == handle.worldThread;
++    }
++
++    @Override
++    protected long getWorldTickImpl(World world) {
++        return worldThreadOf(world).getTick();
++    }
++
++    // ------------------------------------------------------------------
++
++    private static WorldThread worldThreadOf(World world) {
++        var handle = ((CraftWorld) world).getHandle();
++        if (handle == null || handle.worldThread == null) {
++            throw new IllegalStateException("World " + world.getName() + " is not initialized or unloaded");
++        }
++        return handle.worldThread;
++    }
++
++    private static String worldName(WorldThread worldThread) {
++        var bukkitWorld = worldThread.getLevel().getWorld();
++        return bukkitWorld != null ? bukkitWorld.getName() : "world";
++    }
++}
+diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
+index 78110dbe4433d117e4e92e791e29d561c1b7d066..0c6da165bc54339c5c060236b178e8af818ee75b 100644
+--- a/world/minogami/thread/WorldThread.java
++++ b/world/minogami/thread/WorldThread.java
+@@ -19,6 +19,12 @@ public class WorldThread implements Runnable {
+     
+     private final Queue<WorldTask<?>> worldTasks = new ConcurrentLinkedQueue<>();
+     
++    // Minogami start - world tick hook API
++    final java.util.List<ImplWorldTickScheduler.HookEntry> preTickHooks = new java.util.concurrent.CopyOnWriteArrayList<>();
++    final java.util.List<ImplWorldTickScheduler.HookEntry> postTickHooks = new java.util.concurrent.CopyOnWriteArrayList<>();
++    final Queue<ImplWorldTickScheduler.HandoffEntry> handoffQueue = new ConcurrentLinkedQueue<>();
++    // Minogami end - world tick hook API
++    
+     private long tick = 0;
+     
+     private volatile WorldThread waitFor = null;
+@@ -57,6 +63,8 @@ public class WorldThread implements Runnable {
+     
+     public void setCurrentThread(Thread currentThread) {this.currentThread = currentThread;}
+     
++    public long getTick() {return tick;} // Minogami - world tick hook API
++    
+     public void addWorldTask(WorldTask<?> worldTask) {
+         if (worldTask != null) {
+             worldTasks.offer(worldTask);
+@@ -81,12 +89,17 @@ public class WorldThread implements Runnable {
+             
+             executeWorldTasks();
+             
++            ImplWorldTickScheduler.runHandoffs(this); // Minogami - world tick hook API
++            ImplWorldTickScheduler.runHooks(this, preTickHooks); // Minogami - world tick hook API
++            
+             try {
+                 worldTickRunnable.run();
+             } catch (Throwable t) {
+                 world.minogami.log.SafeguardLogger.logSafeguardException("WorldTickThread[" + (level.getWorld() != null ? level.getWorld().getName() : "world") + "]", t);
+             }
+             
++            ImplWorldTickScheduler.runHooks(this, postTickHooks); // Minogami - world tick hook API
++            
+             executeWorldTasks();
+         } finally {
+             try {
