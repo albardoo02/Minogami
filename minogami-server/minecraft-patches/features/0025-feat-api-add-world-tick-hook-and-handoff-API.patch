@@ -1,21 +1,25 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: albardoo02 <akshs@outlook.jp>
-Date: Thu, 12 Nov 2026 02:36:35 +0000
+Date: Thu, 12 Nov 2026 02:43:19 +0000
 Subject: [PATCH] feat(api): add world tick hook and handoff API
 
 Expose WorldTickScheduler so plugins can run code on the thread that ticks
 a given world: per-tick PRE/POST hooks and a non-blocking handoff that runs
 a task at the start of the target world's next tick.
 
+Hooks and pending handoffs are released when their world is unloaded or the
+server stops (swept on the main thread after each tick), and when their
+plugin is disabled.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01WvVxmMCcCQajvctZ8727nY
 
 diff --git a/world/minogami/thread/ImplWorldTickScheduler.java b/world/minogami/thread/ImplWorldTickScheduler.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd8460b9ec43
+index 0000000000000000000000000000000000000000..790f27d323c48309e3e12009a17e7c32900a909c
 --- /dev/null
 +++ b/world/minogami/thread/ImplWorldTickScheduler.java
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,291 @@
 +package world.minogami.thread;
 +
 +import net.minecraft.server.MinecraftServer;
@@ -27,7 +31,10 @@ index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd84
 +
 +import java.util.List;
 +import java.util.Objects;
++import java.util.Set;
++import java.util.concurrent.CancellationException;
 +import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ConcurrentHashMap;
 +import java.util.function.Supplier;
 +
 +/**
@@ -35,8 +42,16 @@ index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd84
 + * <p>
 + * Loaded lazily by {@link WorldTickScheduler} through reflection, so no bootstrap code
 + * in {@code net.minecraft} is required.
++ *
++ * <h2>Lifecycle</h2>
++ * Every {@link WorldThread} that has ever received a hook or a handoff is tracked. After each server tick,
++ * {@link #sweep()} (main thread, no world is ticking) closes the tracked worlds that are no longer loaded:
++ * their hooks are cancelled and their pending handoffs fail. Producers re-check the closed flag after
++ * enqueueing, so an entry added concurrently with closing is never left behind.
 + */
 +public final class ImplWorldTickScheduler extends WorldTickScheduler {
++
++    private static final Set<WorldThread> TRACKED = ConcurrentHashMap.newKeySet();
 +
 +    public ImplWorldTickScheduler() {super();}
 +
@@ -67,32 +82,31 @@ index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd84
 +
 +        @Override
 +        public void cancel() {
-+            if (cancelled) return;
 +            cancelled = true;
-+            (phase == TickPhase.PRE ? owner.preTickHooks : owner.postTickHooks).remove(this);
++            hooksOf(owner, phase).remove(this);
 +        }
 +    }
 +
 +    static final class HandoffEntry {
 +        private final Plugin plugin;
 +        private final Supplier<?> supplier;
-+        @SuppressWarnings("rawtypes")
-+        private final CompletableFuture future;
++        private final CompletableFuture<Object> future;
 +
++        @SuppressWarnings("unchecked")
 +        HandoffEntry(Plugin plugin, Supplier<?> supplier, CompletableFuture<?> future) {
 +            this.plugin = plugin;
 +            this.supplier = supplier;
-+            this.future = future;
++            this.future = (CompletableFuture<Object>) future;
 +        }
 +    }
 +
 +    // ------------------------------------------------------------------
-+    // Called from WorldThread#run
++    // Called from WorldThread#run (on the world thread)
 +    // ------------------------------------------------------------------
 +
 +    static void runHooks(WorldThread worldThread, List<HookEntry> hooks) {
 +        if (hooks.isEmpty()) return;
-+        for (HookEntry hook : hooks) { // CopyOnWriteArrayList: safe against cancel() during iteration
++        for (HookEntry hook : hooks) { // CopyOnWriteArrayList: safe against cancel()/register during iteration
 +            if (hook.cancelled) continue;
 +            if (!hook.plugin.isEnabled()) {
 +                hook.cancel();
@@ -101,28 +115,91 @@ index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd84
 +            try {
 +                hook.task.run();
 +            } catch (Throwable t) {
++                rethrowIfFatal(t);
 +                SafeguardLogger.logSafeguardException("WorldTickHook[" + hook.plugin.getName() + "] at " + worldName(worldThread), t);
 +            }
 +        }
 +    }
 +
-+    @SuppressWarnings("unchecked")
 +    static void runHandoffs(WorldThread worldThread) {
 +        if (worldThread.handoffQueue.isEmpty()) return;
 +        // Only drain what was queued before this tick started; entries added while draining run next tick.
 +        int count = worldThread.handoffQueue.size();
 +        HandoffEntry entry;
 +        while (count-- > 0 && (entry = worldThread.handoffQueue.poll()) != null) {
++            if (entry.future.isDone()) continue; // cancelled by the caller
 +            if (!entry.plugin.isEnabled()) {
 +                entry.future.completeExceptionally(new IllegalStateException("Plugin " + entry.plugin.getName() + " is disabled"));
 +                continue;
 +            }
++            Object result;
 +            try {
-+                entry.future.complete(entry.supplier.get());
++                result = entry.supplier.get();
 +            } catch (Throwable t) {
++                rethrowIfFatal(t);
 +                entry.future.completeExceptionally(t);
 +                SafeguardLogger.logSafeguardException("WorldHandoff[" + entry.plugin.getName() + "] at " + worldName(worldThread), t);
++                continue;
 +            }
++            // Dependent stages of the future (thenAccept …) run here, on this world thread.
++            try {
++                entry.future.complete(result);
++            } catch (Throwable t) {
++                rethrowIfFatal(t);
++                SafeguardLogger.logSafeguardException("WorldHandoff[" + entry.plugin.getName() + "] callback at " + worldName(worldThread), t);
++            }
++        }
++    }
++
++    // ------------------------------------------------------------------
++    // Called from WorldThreadPool (main thread, between ticks)
++    // ------------------------------------------------------------------
++
++    static void sweep() {
++        if (TRACKED.isEmpty()) return;
++        for (WorldThread worldThread : TRACKED) {
++            if (!isLoaded(worldThread)) {
++                close(worldThread, "World " + worldName(worldThread) + " was unloaded");
++            } else {
++                // Release hooks of plugins disabled while their world did not tick.
++                removeDisabledHooks(worldThread.preTickHooks);
++                removeDisabledHooks(worldThread.postTickHooks);
++            }
++        }
++    }
++
++    static void closeAll(String reason) {
++        for (WorldThread worldThread : TRACKED) {
++            close(worldThread, reason);
++        }
++    }
++
++    private static void close(WorldThread worldThread, String reason) {
++        worldThread.tickApiClosed = true;
++        TRACKED.remove(worldThread);
++        for (HookEntry hook : worldThread.preTickHooks) hook.cancelled = true;
++        for (HookEntry hook : worldThread.postTickHooks) hook.cancelled = true;
++        worldThread.preTickHooks.clear();
++        worldThread.postTickHooks.clear();
++        failPendingHandoffs(worldThread, reason);
++    }
++
++    private static void failPendingHandoffs(WorldThread worldThread, String reason) {
++        HandoffEntry entry;
++        while ((entry = worldThread.handoffQueue.poll()) != null) {
++            try {
++                entry.future.completeExceptionally(new CancellationException(reason));
++            } catch (Throwable t) {
++                rethrowIfFatal(t);
++                SafeguardLogger.logSafeguardException("WorldHandoff[" + entry.plugin.getName() + "] callback (closed)", t);
++            }
++        }
++    }
++
++    private static void removeDisabledHooks(List<HookEntry> hooks) {
++        if (hooks.isEmpty()) return;
++        for (HookEntry hook : hooks) {
++            if (!hook.plugin.isEnabled()) hook.cancel();
 +        }
 +    }
 +
@@ -140,8 +217,17 @@ index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd84
 +            throw new IllegalStateException("Plugin " + plugin.getName() + " is disabled");
 +        }
 +        WorldThread worldThread = worldThreadOf(world);
++        if (worldThread.tickApiClosed) {
++            throw new IllegalStateException("World " + world.getName() + " is unloaded");
++        }
++        TRACKED.add(worldThread);
 +        HookEntry entry = new HookEntry(plugin, world, phase, task, worldThread);
-+        (phase == TickPhase.PRE ? worldThread.preTickHooks : worldThread.postTickHooks).add(entry);
++        hooksOf(worldThread, phase).add(entry);
++        // Re-check after publishing: the world may have been closed concurrently.
++        if (worldThread.tickApiClosed) {
++            entry.cancel();
++            throw new IllegalStateException("World " + world.getName() + " is unloaded");
++        }
 +        return entry;
 +    }
 +
@@ -155,23 +241,29 @@ index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd84
 +            future.completeExceptionally(new IllegalStateException("Plugin " + plugin.getName() + " is disabled"));
 +            return future;
 +        }
-+        if (Bukkit.getWorld(world.getUID()) == null) {
-+            future.completeExceptionally(new IllegalStateException("World " + world.getName() + " is not loaded"));
-+            return future;
-+        }
 +        MinecraftServer server = MinecraftServer.getServer();
 +        if (server == null || !server.isRunning() || Bukkit.isStopping()) {
 +            future.completeExceptionally(new IllegalStateException("Server is stopping"));
 +            return future;
 +        }
-+        worldThreadOf(world).handoffQueue.offer(new HandoffEntry(plugin, task, future));
++        WorldThread worldThread = worldThreadOf(world);
++        if (worldThread.tickApiClosed) {
++            future.completeExceptionally(new IllegalStateException("World " + world.getName() + " is unloaded"));
++            return future;
++        }
++        TRACKED.add(worldThread);
++        worldThread.handoffQueue.offer(new HandoffEntry(plugin, task, future));
++        // Re-check after publishing: if the world was closed concurrently, nobody else will drain the queue.
++        if (worldThread.tickApiClosed) {
++            failPendingHandoffs(worldThread, "World " + world.getName() + " is unloaded");
++        }
 +        return future;
 +    }
 +
 +    @Override
 +    protected boolean isWorldThreadImpl(World world) {
-+        if (world == null) return false;
-+        var handle = ((CraftWorld) world).getHandle();
++        if (!(world instanceof CraftWorld craftWorld)) return false;
++        var handle = craftWorld.getHandle();
 +        if (handle == null || handle.worldThread == null) return false;
 +        return WorldThreadPool.getWorldThreadFromCurrentThread() == handle.worldThread;
 +    }
@@ -183,37 +275,63 @@ index 0000000000000000000000000000000000000000..40109cc7ae30cad028998c32a3dadd84
 +
 +    // ------------------------------------------------------------------
 +
++    private static List<HookEntry> hooksOf(WorldThread worldThread, TickPhase phase) {
++        return phase == TickPhase.PRE ? worldThread.preTickHooks : worldThread.postTickHooks;
++    }
++
 +    private static WorldThread worldThreadOf(World world) {
-+        var handle = ((CraftWorld) world).getHandle();
++        if (!(world instanceof CraftWorld craftWorld)) {
++            throw new IllegalArgumentException("Not a server world: " + world);
++        }
++        var handle = craftWorld.getHandle();
 +        if (handle == null || handle.worldThread == null) {
 +            throw new IllegalStateException("World " + world.getName() + " is not initialized or unloaded");
 +        }
 +        return handle.worldThread;
 +    }
 +
++    private static boolean isLoaded(WorldThread worldThread) {
++        World world = worldThread.getLevel().getWorld();
++        return world != null && Bukkit.getWorld(world.getUID()) == world;
++    }
++
 +    private static String worldName(WorldThread worldThread) {
-+        var bukkitWorld = worldThread.getLevel().getWorld();
-+        return bukkitWorld != null ? bukkitWorld.getName() : "world";
++        World world = worldThread.getLevel().getWorld();
++        return world != null ? world.getName() : "world";
++    }
++
++    /**
++     * Never swallow errors the JVM cannot recover from (OutOfMemoryError, InternalError …).
++     * StackOverflowError is a VirtualMachineError too but is recoverable once the stack unwinds, so it is logged.
++     * LinkageError (e.g. NoClassDefFoundError from a plugin being reloaded) is plugin-local and logged as well.
++     */
++    private static void rethrowIfFatal(Throwable t) {
++        if (t instanceof VirtualMachineError && !(t instanceof StackOverflowError)) {
++            throw (VirtualMachineError) t;
++        }
 +    }
 +}
 diff --git a/world/minogami/thread/WorldThread.java b/world/minogami/thread/WorldThread.java
-index 78110dbe4433d117e4e92e791e29d561c1b7d066..0c6da165bc54339c5c060236b178e8af818ee75b 100644
+index 78110dbe4433d117e4e92e791e29d561c1b7d066..7cb92a7caa6b4b521350bc68841005fb4cbbc774 100644
 --- a/world/minogami/thread/WorldThread.java
 +++ b/world/minogami/thread/WorldThread.java
-@@ -19,6 +19,12 @@ public class WorldThread implements Runnable {
+@@ -19,7 +19,14 @@ public class WorldThread implements Runnable {
      
      private final Queue<WorldTask<?>> worldTasks = new ConcurrentLinkedQueue<>();
      
+-    private long tick = 0;
 +    // Minogami start - world tick hook API
 +    final java.util.List<ImplWorldTickScheduler.HookEntry> preTickHooks = new java.util.concurrent.CopyOnWriteArrayList<>();
 +    final java.util.List<ImplWorldTickScheduler.HookEntry> postTickHooks = new java.util.concurrent.CopyOnWriteArrayList<>();
 +    final Queue<ImplWorldTickScheduler.HandoffEntry> handoffQueue = new ConcurrentLinkedQueue<>();
++    volatile boolean tickApiClosed = false; // set once the world is unloaded or the server stops
 +    // Minogami end - world tick hook API
 +    
-     private long tick = 0;
++    private volatile long tick = 0; // Minogami - world tick hook API: read from other threads
      
      private volatile WorldThread waitFor = null;
-@@ -57,6 +63,8 @@ public class WorldThread implements Runnable {
+     
+@@ -57,6 +64,8 @@ public class WorldThread implements Runnable {
      
      public void setCurrentThread(Thread currentThread) {this.currentThread = currentThread;}
      
@@ -222,7 +340,7 @@ index 78110dbe4433d117e4e92e791e29d561c1b7d066..0c6da165bc54339c5c060236b178e8af
      public void addWorldTask(WorldTask<?> worldTask) {
          if (worldTask != null) {
              worldTasks.offer(worldTask);
-@@ -81,12 +89,17 @@ public class WorldThread implements Runnable {
+@@ -81,12 +90,17 @@ public class WorldThread implements Runnable {
              
              executeWorldTasks();
              
@@ -240,3 +358,24 @@ index 78110dbe4433d117e4e92e791e29d561c1b7d066..0c6da165bc54339c5c060236b178e8af
              executeWorldTasks();
          } finally {
              try {
+diff --git a/world/minogami/thread/WorldThreadPool.java b/world/minogami/thread/WorldThreadPool.java
+index 8fa5a154fc7fb2c6087bbc79412929f147e20ff0..39ad17f97afe05dbc42b1e704da3f62cb848d344 100644
+--- a/world/minogami/thread/WorldThreadPool.java
++++ b/world/minogami/thread/WorldThreadPool.java
+@@ -71,6 +71,7 @@ public class WorldThreadPool {
+     }
+     
+     public static void shutdown() {
++        ImplWorldTickScheduler.closeAll("Server is stopping"); // Minogami - world tick hook API
+         MinecraftServer server = MinecraftServer.getServer();
+         if (server != null) {
+             for (ServerLevel level : server.getAllLevels()) {
+@@ -109,6 +110,8 @@ public class WorldThreadPool {
+                 e.printStackTrace();
+             }
+         }
++        
++        ImplWorldTickScheduler.sweep(); // Minogami - world tick hook API: release unloaded worlds
+     }
+     
+ }

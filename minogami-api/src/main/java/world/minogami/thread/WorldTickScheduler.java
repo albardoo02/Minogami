@@ -42,6 +42,7 @@ public abstract class WorldTickScheduler {
 
     private static volatile WorldTickScheduler INSTANCE = null;
     private static volatile boolean resolved = false;
+    private static volatile Throwable unavailableCause = null;
 
     protected WorldTickScheduler() {}
 
@@ -52,8 +53,9 @@ public abstract class WorldTickScheduler {
                     try {
                         Class<?> type = Class.forName(IMPLEMENTATION, true, WorldTickScheduler.class.getClassLoader());
                         INSTANCE = (WorldTickScheduler) type.getDeclaredConstructor().newInstance();
-                    } catch (ReflectiveOperationException | LinkageError ignored) {
+                    } catch (ReflectiveOperationException | LinkageError | ClassCastException e) {
                         INSTANCE = null;
+                        unavailableCause = e;
                     }
                     resolved = true;
                 }
@@ -65,7 +67,7 @@ public abstract class WorldTickScheduler {
     private static WorldTickScheduler require() {
         WorldTickScheduler scheduler = instance();
         if (scheduler == null) {
-            throw new UnsupportedOperationException("WorldTickScheduler is not available on this server");
+            throw new UnsupportedOperationException("WorldTickScheduler is not available on this server", unavailableCause);
         }
         return scheduler;
     }
@@ -80,8 +82,9 @@ public abstract class WorldTickScheduler {
     /**
      * Registers a callback that runs every tick on the thread ticking {@code world}.
      * Can be called from any thread; the hook starts at the next {@code phase} of that world.
+     * The hook is removed automatically when its plugin is disabled or the world is unloaded.
      *
-     * @throws IllegalStateException if the plugin is disabled or the world is not loaded
+     * @throws IllegalStateException if the plugin is disabled or the world is unloaded
      */
     public static WorldTickHook registerTickHook(Plugin plugin, World world, TickPhase phase, Runnable task) {
         return require().registerTickHookImpl(plugin, world, phase, task);
@@ -91,8 +94,13 @@ public abstract class WorldTickScheduler {
      * Runs {@code task} once on the thread ticking {@code world}, at the start of that world's next tick.
      * Never blocks the caller, and never runs the task inline, even when called from that world's own thread.
      * <p>
-     * The future fails if the plugin is disabled, the world is not loaded or the server is stopping.
-     * If the world is unloaded after this call, the future may never complete; do not wait on it from a world thread.
+     * The future fails if the plugin is disabled or the server is stopping, and fails with a
+     * {@link java.util.concurrent.CancellationException} if the world is unloaded before the task runs
+     * (at the latest at the end of the server tick in which it was unloaded).
+     * Cancelling the future before it runs skips the task.
+     * <p>
+     * Dependent stages ({@code thenAccept} …) attached before completion run on the target world's thread,
+     * or on the main thread when the future fails because of an unload. Do not block on the future from a world thread.
      */
     public static <T> CompletableFuture<T> handoff(Plugin plugin, World world, Supplier<T> task) {
         return require().handoffImpl(plugin, world, task);
